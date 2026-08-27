@@ -54,46 +54,38 @@ In IntelliJ, open **Settings > Tools > MCP Server** and use **Copy Stdio Config*
 }
 ```
 
-### Multiple IntelliJ projects
+### Dynamic projects and Git worktrees
 
-Keep one named server entry per IntelliJ project. In an IntelliJ-generated stdio configuration, `IJ_MCP_SERVER_PORT` identifies the running IDE process and `IJ_MCP_SERVER_PROJECT_PATH` identifies the project within that process:
+A copied stdio entry normally binds to one project. To reuse one entry for every project and worktree open in the same IntelliJ process, replace its fixed project path with an environment reference:
 
 ```json
 {
   "mcpServers": {
-    "project-a": {
+    "intellij-current": {
       "type": "stdio",
       "command": "/path/from/intellij",
       "args": ["stdioMcpServer"],
       "env": {
-        "IJ_MCP_SERVER_PROJECT_PATH": "/absolute/path/to/project-a",
-        "IJ_MCP_SERVER_PORT": "64343"
-      }
-    },
-    "project-b": {
-      "type": "stdio",
-      "command": "/path/from/intellij",
-      "args": ["stdioMcpServer"],
-      "env": {
-        "IJ_MCP_SERVER_PROJECT_PATH": "/absolute/path/to/project-b",
-        "IJ_MCP_SERVER_PORT": "64343"
+        "IJ_MCP_SERVER_PROJECT_PATH": "${IJCTL_PROJECT_PATH}",
+        "IJ_MCP_SERVER_PORT": "port-from-intellij"
       }
     }
   }
 }
 ```
 
-Projects open in the same IntelliJ process can share a port while using different project paths. Separate IntelliJ processes may use different ports. Always start from the configuration copied from each IDE rather than assuming a port.
-
-Select the project explicitly when invoking `ijctl`:
+Set `IJCTL_PROJECT_PATH` to the exact Git root before invoking `ijctl`. In a worktree, `git rev-parse --show-toplevel` returns that worktree's root rather than the primary checkout:
 
 ```sh
-ijctl --server project-a doctor
-ijctl --server project-a tools
-ijctl --server project-a call search_symbol --args-json '{"q":"UserService"}'
+env IJCTL_PROJECT_PATH="$(git rev-parse --show-toplevel)" \
+  ijctl --server intellij-current doctor
 ```
 
-When multiple servers are configured, omitting `--server` fails with the available server names instead of choosing arbitrarily. The bundled Copilot skill first resolves a project explicitly named by the user, otherwise the current Git root. It matches that canonical path exactly against `IJ_MCP_SERVER_PROJECT_PATH`, passes the matching `--server` value on every command, and asks the user if no unique match exists.
+The target project or worktree must be open in IntelliJ. Configuration parsing fails explicitly when `IJCTL_PROJECT_PATH` is omitted, preventing an accidental fallback to another checkout.
+
+`IJ_MCP_SERVER_PORT` identifies the running IDE process, while the dynamic project path identifies a project within that process. Projects in the same IntelliJ process share one entry. Separate IntelliJ processes with different ports need separate named entries, selected with `--server`. Always retain the port copied from the corresponding IDE.
+
+The bundled Copilot skill resolves a project explicitly named by the user, otherwise the current Git root. It preserves a worktree's own root, supplies `IJCTL_PROJECT_PATH` on every command, and never falls back to the primary checkout. Static project entries remain supported.
 
 Streamable HTTP is also supported:
 
@@ -114,24 +106,32 @@ URLs ending in `/sse` are recognized as the legacy SSE transport. You can also s
 
 ## Use
 
+The examples below use the dynamic stdio entry above. Set the project path from the current checkout or worktree:
+
+```sh
+export IJCTL_PROJECT_PATH="$(git rev-parse --show-toplevel)"
+```
+
+Recompute it after moving the shell to a different project. A static project entry does not require this variable; use that entry's server name instead.
+
 Verify the connection:
 
 ```sh
-ijctl doctor --pretty
+ijctl --server intellij-current doctor --pretty
 ```
 
 Discover tools without loading every schema:
 
 ```sh
-ijctl tools
-ijctl describe search_symbol --pretty
+ijctl --server intellij-current tools
+ijctl --server intellij-current describe search_symbol --pretty
 ```
 
 Call a tool:
 
 ```sh
-ijctl describe search_symbol
-ijctl call search_symbol --args-json '{"q":"UserService"}'
+ijctl --server intellij-current describe search_symbol
+ijctl --server intellij-current call search_symbol --args-json '{"q":"UserService"}'
 ```
 
 IntelliJ MCP schemas vary by IDE version. Always use the names and path semantics returned by `ijctl describe`; most tools operate on the project currently open in IntelliJ.
@@ -139,8 +139,8 @@ IntelliJ MCP schemas vary by IDE version. Always use the names and path semantic
 For complex arguments:
 
 ```sh
-ijctl call analyze_calls --args-file arguments.json
-cat arguments.json | ijctl call analyze_calls --args-file -
+ijctl --server intellij-current call analyze_calls --args-file arguments.json
+cat arguments.json | ijctl --server intellij-current call analyze_calls --args-file -
 ```
 
 All successful output is JSON on stdout. Configuration and connection errors are JSON on stderr with exit code `1`. An MCP tool result with `isError: true` is written to stdout with exit code `2`.
@@ -184,9 +184,9 @@ session:
 /skills info intellij-mcp-tools
 ```
 
-The skill teaches Copilot to discover tools progressively with `ijctl tools`
-and `ijctl describe`, follow the active IntelliJ schema, preserve JSON output,
-and avoid unauthorized side effects.
+The skill teaches Copilot to select the requested project or worktree, discover
+tools progressively with `ijctl tools` and `ijctl describe`, follow the active
+IntelliJ schema, preserve JSON output, and avoid unauthorized side effects.
 
 ## Development
 
