@@ -43,7 +43,8 @@ Do not commit generated `dist/`, `dist-test/`, local `ijctl.config.json`, or
 - Keep configuration parsing and selection in `src/config.ts`; do not duplicate
   precedence or transport normalization in command handlers.
 - Keep MCP SDK and transport details in `src/mcp.ts`.
-- Keep `plugin.json` and `package.json` versions aligned. The Copilot plugin
+- Keep `plugin.json`, `package.json`, and the plugin entry in
+  `.github/plugin/marketplace.json` version-aligned. The Copilot plugin
   distributes the skill but does not install the npm CLI.
 - Preserve the output contract: successful and tool-level results go to stdout;
   operational errors go to stderr; MCP tool errors exit with status 2.
@@ -72,7 +73,8 @@ Documentation changes are part of the code change, not follow-up work:
   or build/test architecture changes.
 - Update `README.md` whenever installation, configuration, commands, supported
   behavior, or user-visible output changes.
-- Update `plugin.json` whenever plugin metadata or component paths change.
+- Update `plugin.json` and `.github/plugin/marketplace.json` whenever plugin
+  metadata, versions, or component paths change.
 - Update this file when contributor workflow or repository-wide constraints
   change.
 

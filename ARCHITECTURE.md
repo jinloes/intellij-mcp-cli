@@ -158,18 +158,24 @@ Tool arguments come from inline JSON, a file, stdin, or an empty object.
 
 ## Distribution architecture
 
-`plugin.json` makes the repository directly installable with
-`copilot plugin install jinloes/intellij-mcp-cli`. Its `skills` field points to
-the existing `skills/` directory, where `intellij-mcp-tools/SKILL.md` defines
-the capability loaded by Copilot.
+`.github/plugin/marketplace.json` makes the repository a self-hosted marketplace
+named `jinloes-plugins`. Its `intellij-mcp-tools` entry points to the repository
+root, where `plugin.json` identifies the plugin and its `skills` field points to
+the existing `skills/` directory.
+
+Installation has two explicit steps:
+
+1. Register `jinloes/intellij-mcp-cli` as a marketplace.
+2. Install `intellij-mcp-tools@jinloes-plugins`.
 
 The plugin name and npm package name differ intentionally:
 
 - `intellij-mcp-tools` identifies the Copilot plugin and skill.
 - `intellij-mcp-cli` identifies the npm package that supplies `ijctl`.
 
-Their versions remain aligned so a repository revision describes one compatible
-CLI-and-skill release.
+The npm package version, plugin manifest version, and marketplace plugin-entry
+version remain aligned so a repository revision describes one compatible
+CLI-and-skill release. The marketplace metadata has its own catalog version.
 
 ## Trust and security boundaries
 

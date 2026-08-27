@@ -51,6 +51,7 @@ production bin path from `package.json`.
 | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
 | `package.json`                       | Package metadata, `ijctl` bin mapping, Node engine/Volta pin, dependencies, and build/test scripts |
 | `plugin.json`                        | Copilot plugin metadata and the `skills/` component path used by direct repository installation    |
+| `.github/plugin/marketplace.json`    | Self-hosted `jinloes-plugins` marketplace catalog and installable plugin entry                     |
 | `package-lock.json`                  | Reproducible npm dependency graph                                                                  |
 | `tsconfig.json`                      | Strict production TypeScript build from `src/` to `dist/`                                          |
 | `tsconfig.test.json`                 | Test compilation from `src/` and `test/` to `dist-test/`                                           |
@@ -61,17 +62,17 @@ production bin path from `package.json`.
 
 ## Feature-to-code index
 
-| Feature                                | Primary implementation                              | Tests                                                      |
-| -------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------- |
-| Node.js minimum-version enforcement    | `src/cli.ts`, `src/node-version.ts`, `package.json` | `test/project.test.ts`                                     |
-| Copilot plugin distribution            | `plugin.json`, `skills/intellij-mcp-tools/SKILL.md` | Manifest alignment in `test/project.test.ts`               |
-| CLI command definitions and exit codes | `src/cli-main.ts`                                   | `test/project.test.ts`                                     |
-| Configuration precedence and parsing   | `src/config.ts`                                     | `test/project.test.ts`                                     |
-| Environment interpolation              | `src/config.ts`                                     | `test/project.test.ts`                                     |
-| Tool argument JSON/file/stdin input    | `src/input.ts`                                      | No focused test yet                                        |
-| Stdio MCP transport                    | `src/mcp.ts`                                        | `test/project.test.ts`, `test/fixtures/mock-mcp-server.ts` |
-| Streamable HTTP transport              | `src/mcp.ts`                                        | No runtime fixture yet                                     |
-| Legacy SSE transport                   | `src/config.ts`, `src/mcp.ts`                       | Inference test only; no runtime fixture yet                |
-| Tool discovery and schema description  | `src/cli-main.ts`, `src/mcp.ts`                     | `test/project.test.ts`                                     |
-| Tool invocation and tool-level errors  | `src/cli-main.ts`, `src/mcp.ts`                     | `test/project.test.ts`                                     |
-| JSON output formatting                 | `src/output.ts`, `src/cli-main.ts`                  | Covered through CLI integration assertions                 |
+| Feature                                | Primary implementation                                                                 | Tests                                                      |
+| -------------------------------------- | -------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Node.js minimum-version enforcement    | `src/cli.ts`, `src/node-version.ts`, `package.json`                                    | `test/project.test.ts`                                     |
+| Copilot plugin distribution            | `.github/plugin/marketplace.json`, `plugin.json`, `skills/intellij-mcp-tools/SKILL.md` | Manifest alignment in `test/project.test.ts`               |
+| CLI command definitions and exit codes | `src/cli-main.ts`                                                                      | `test/project.test.ts`                                     |
+| Configuration precedence and parsing   | `src/config.ts`                                                                        | `test/project.test.ts`                                     |
+| Environment interpolation              | `src/config.ts`                                                                        | `test/project.test.ts`                                     |
+| Tool argument JSON/file/stdin input    | `src/input.ts`                                                                         | No focused test yet                                        |
+| Stdio MCP transport                    | `src/mcp.ts`                                                                           | `test/project.test.ts`, `test/fixtures/mock-mcp-server.ts` |
+| Streamable HTTP transport              | `src/mcp.ts`                                                                           | No runtime fixture yet                                     |
+| Legacy SSE transport                   | `src/config.ts`, `src/mcp.ts`                                                          | Inference test only; no runtime fixture yet                |
+| Tool discovery and schema description  | `src/cli-main.ts`, `src/mcp.ts`                                                        | `test/project.test.ts`                                     |
+| Tool invocation and tool-level errors  | `src/cli-main.ts`, `src/mcp.ts`                                                        | `test/project.test.ts`                                     |
+| JSON output formatting                 | `src/output.ts`, `src/cli-main.ts`                                                     | Covered through CLI integration assertions                 |

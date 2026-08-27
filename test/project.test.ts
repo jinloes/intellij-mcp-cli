@@ -30,6 +30,15 @@ interface PluginManifest {
   version?: unknown;
 }
 
+interface MarketplaceManifest {
+  name?: unknown;
+  plugins?: Array<{
+    name?: unknown;
+    source?: unknown;
+    version?: unknown;
+  }>;
+}
+
 const packageRoot = fileURLToPath(new URL("../../", import.meta.url));
 const packageManifest = JSON.parse(
   await readFile(join(packageRoot, "package.json"), "utf8"),
@@ -37,6 +46,12 @@ const packageManifest = JSON.parse(
 const pluginManifest = JSON.parse(
   await readFile(join(packageRoot, "plugin.json"), "utf8"),
 ) as PluginManifest;
+const marketplaceManifest = JSON.parse(
+  await readFile(
+    join(packageRoot, ".github", "plugin", "marketplace.json"),
+    "utf8",
+  ),
+) as MarketplaceManifest;
 
 function packageBinPath(): string {
   const binTarget = packageManifest.bin?.ijctl;
@@ -67,6 +82,18 @@ test("keeps the Copilot plugin manifest aligned with the package", () => {
   assert.equal(pluginManifest.name, "intellij-mcp-tools");
   assert.equal(pluginManifest.skills, "skills/");
   assert.equal(pluginManifest.version, packageManifest.version);
+});
+
+test("keeps the marketplace entry aligned with the plugin", () => {
+  assert.equal(marketplaceManifest.name, "jinloes-plugins");
+  assert.equal(marketplaceManifest.plugins?.length, 1);
+  assert.deepEqual(marketplaceManifest.plugins?.[0], {
+    name: pluginManifest.name,
+    description:
+      "Use IntelliJ IDEA's MCP tools through the ijctl CLI for IDE-aware code analysis and operations.",
+    version: pluginManifest.version,
+    source: ".",
+  });
 });
 
 test("code map lists every source module", async () => {

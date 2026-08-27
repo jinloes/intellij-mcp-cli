@@ -118,27 +118,18 @@ All successful output is JSON on stdout. Configuration and connection errors are
 The plugin teaches Copilot how to discover and safely invoke IntelliJ MCP tools.
 It does not install the `ijctl` executable, so build and link the CLI first.
 
-Install the plugin directly from GitHub:
+Register this repository's marketplace, then install the plugin:
 
 ```sh
-copilot plugin install jinloes/intellij-mcp-cli
+copilot plugin marketplace add jinloes/intellij-mcp-cli
+copilot plugin install intellij-mcp-tools@jinloes-plugins
 copilot plugin list
 ```
 
-Copilot currently supports direct repository installation but warns that this
-form is deprecated. A marketplace installation should replace it before direct
-plugin sources are removed.
-
-For local plugin development, install the current checkout instead:
+Refresh the marketplace and plugin to receive published updates:
 
 ```sh
-copilot plugin install "$(pwd)"
-```
-
-Copilot caches installed plugins. Re-run the install command after local
-changes, or update a GitHub installation with:
-
-```sh
+copilot plugin marketplace update jinloes-plugins
 copilot plugin update intellij-mcp-tools
 ```
 
