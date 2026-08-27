@@ -14,15 +14,19 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "postbuild": "node -e \"const {chmodSync}=require('node:fs'); const bin=require('./package.json').bin.ijctl; chmodSync(bin,0o755)\"",
     "prepare": "npm run build",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
-    "test": "node -e \"require('node:fs').rmSync('dist-test',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test dist-test/test/project.test.js",
+    "test": "node -e \"const {rmSync}=require('node:fs'); for (const path of ['dist','dist-test']) rmSync(path,{recursive:true,force:true})\" && npm run build && tsc -p tsconfig.test.json && node --test dist-test/test/project.test.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run format:check && npm run typecheck && npm test && npm run build"
+    "check": "npm run format:check && npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=20"
+  },
+  "volta": {
+    "node": "20.20.2"
   },
   "license": "MIT",
   "dependencies": {

@@ -12,6 +12,9 @@ GitHub Copilot CLI -> ijctl -> IntelliJ MCP server -> IntelliJ project model
 - IntelliJ IDEA 2025.2 or newer with **Settings > Tools > MCP Server > Enable MCP Server**
 - A client configuration copied from IntelliJ's MCP Server settings
 
+Volta users automatically select Node.js 20.20.2 from the pin in `package.json`.
+Other runtime managers should select any supported Node.js 20+ release.
+
 This project does not bypass an organization's security policy. Use it only if both the IntelliJ MCP server and agent-driven CLI access are approved.
 
 ## Install
@@ -110,22 +113,46 @@ All successful output is JSON on stdout. Configuration and connection errors are
 --pretty                    pretty-print JSON
 ```
 
-## Add the Copilot skill
+## Install the Copilot plugin
 
-Build and link `ijctl`, then install the included skill:
+The plugin teaches Copilot how to discover and safely invoke IntelliJ MCP tools.
+It does not install the `ijctl` executable, so build and link the CLI first.
+
+Install the plugin directly from GitHub:
 
 ```sh
-copilot skill add "$(pwd)/skills/intellij-mcp-tools"
+copilot plugin install jinloes/intellij-mcp-cli
+copilot plugin list
 ```
 
-Inside an active Copilot CLI session, run:
+Copilot currently supports direct repository installation but warns that this
+form is deprecated. A marketplace installation should replace it before direct
+plugin sources are removed.
+
+For local plugin development, install the current checkout instead:
+
+```sh
+copilot plugin install "$(pwd)"
+```
+
+Copilot caches installed plugins. Re-run the install command after local
+changes, or update a GitHub installation with:
+
+```sh
+copilot plugin update intellij-mcp-tools
+```
+
+Start a new Copilot CLI session, or reload and verify the skill in an active
+session:
 
 ```text
 /skills reload
 /skills info intellij-mcp-tools
 ```
 
-The skill teaches Copilot to discover tools progressively with `ijctl tools` and `ijctl describe`, follow the active IntelliJ schema, preserve JSON output, and avoid unauthorized side effects.
+The skill teaches Copilot to discover tools progressively with `ijctl tools`
+and `ijctl describe`, follow the active IntelliJ schema, preserve JSON output,
+and avoid unauthorized side effects.
 
 ## Development
 
@@ -133,7 +160,13 @@ The skill teaches Copilot to discover tools progressively with `ijctl tools` and
 npm run check
 ```
 
-The integration test launches a mock MCP server over stdio and verifies tool discovery, schema inspection, successful calls, and MCP tool errors.
+The test suite builds and executes the production package bin. It verifies the Node.js runtime guard, configuration behavior, tool discovery, schema inspection, successful stdio calls, and MCP tool errors against a mock server.
+
+Repository documentation:
+
+- [AGENTS.md](AGENTS.md) - contributor and coding-agent instructions
+- [CODE_MAPPING.md](CODE_MAPPING.md) - feature and module ownership map
+- [ARCHITECTURE.md](ARCHITECTURE.md) - component boundaries and runtime flows
 
 ## Current scope
 

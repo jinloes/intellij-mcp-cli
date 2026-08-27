@@ -1,0 +1,15 @@
+{
+  "name": "intellij-mcp-tools",
+  "description": "Use IntelliJ IDEA's MCP tools through the ijctl CLI for IDE-aware code analysis and operations.",
+  "version": "0.1.0",
+  "author": {
+    "name": "jinloes",
+    "url": "https://github.com/jinloes"
+  },
+  "homepage": "https://github.com/jinloes/intellij-mcp-cli",
+  "repository": "https://github.com/jinloes/intellij-mcp-cli",
+  "license": "MIT",
+  "keywords": ["intellij", "mcp", "developer-tools", "copilot"],
+  "category": "development",
+  "skills": "skills/"
+}
