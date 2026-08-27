@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-test/
+coverage/
+.idea/
+.DS_Store
+*.log
+ijctl.config.json
