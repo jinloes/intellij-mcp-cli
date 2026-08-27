@@ -41,16 +41,59 @@ In IntelliJ, open **Settings > Tools > MCP Server** and use **Copy Stdio Config*
 ```json
 {
   "mcpServers": {
-    "intellij": {
+    "project-a": {
+      "type": "stdio",
       "command": "/path/from/intellij",
-      "args": ["argument-from-intellij"],
+      "args": ["stdioMcpServer"],
       "env": {
-        "IDE_PORT": "${IDE_PORT}"
+        "IJ_MCP_SERVER_PROJECT_PATH": "/absolute/path/to/project-a",
+        "IJ_MCP_SERVER_PORT": "port-from-intellij"
       }
     }
   }
 }
 ```
+
+### Multiple IntelliJ projects
+
+Keep one named server entry per IntelliJ project. In an IntelliJ-generated stdio configuration, `IJ_MCP_SERVER_PORT` identifies the running IDE process and `IJ_MCP_SERVER_PROJECT_PATH` identifies the project within that process:
+
+```json
+{
+  "mcpServers": {
+    "project-a": {
+      "type": "stdio",
+      "command": "/path/from/intellij",
+      "args": ["stdioMcpServer"],
+      "env": {
+        "IJ_MCP_SERVER_PROJECT_PATH": "/absolute/path/to/project-a",
+        "IJ_MCP_SERVER_PORT": "64343"
+      }
+    },
+    "project-b": {
+      "type": "stdio",
+      "command": "/path/from/intellij",
+      "args": ["stdioMcpServer"],
+      "env": {
+        "IJ_MCP_SERVER_PROJECT_PATH": "/absolute/path/to/project-b",
+        "IJ_MCP_SERVER_PORT": "64343"
+      }
+    }
+  }
+}
+```
+
+Projects open in the same IntelliJ process can share a port while using different project paths. Separate IntelliJ processes may use different ports. Always start from the configuration copied from each IDE rather than assuming a port.
+
+Select the project explicitly when invoking `ijctl`:
+
+```sh
+ijctl --server project-a doctor
+ijctl --server project-a tools
+ijctl --server project-a call search_symbol --args-json '{"q":"UserService"}'
+```
+
+When multiple servers are configured, omitting `--server` fails with the available server names instead of choosing arbitrarily. The bundled Copilot skill first resolves a project explicitly named by the user, otherwise the current Git root. It matches that canonical path exactly against `IJ_MCP_SERVER_PROJECT_PATH`, passes the matching `--server` value on every command, and asks the user if no unique match exists.
 
 Streamable HTTP is also supported:
 
