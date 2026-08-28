@@ -1,4 +1,11 @@
 import { createInterface } from "node:readline";
+import { appendFileSync } from "node:fs";
+import { setTimeout as delay } from "node:timers/promises";
+
+const startCountFile = process.env.MOCK_MCP_START_COUNT_FILE;
+if (startCountFile !== undefined) {
+  appendFileSync(startCountFile, `${process.pid}\n`, "utf8");
+}
 
 interface JsonRpcRequest {
   jsonrpc: "2.0";
@@ -87,13 +94,31 @@ for await (const line of input) {
     const argumentsValue = request.params?.arguments;
 
     if (name === "echo") {
-      const text =
+      let text =
         typeof argumentsValue === "object" &&
         argumentsValue !== null &&
         "text" in argumentsValue &&
         typeof argumentsValue.text === "string"
           ? argumentsValue.text
           : "";
+      const delayMs =
+        typeof argumentsValue === "object" &&
+        argumentsValue !== null &&
+        "delayMs" in argumentsValue &&
+        typeof argumentsValue.delayMs === "number"
+          ? argumentsValue.delayMs
+          : 0;
+      const responseBytes =
+        typeof argumentsValue === "object" &&
+        argumentsValue !== null &&
+        "responseBytes" in argumentsValue &&
+        typeof argumentsValue.responseBytes === "number"
+          ? argumentsValue.responseBytes
+          : 0;
+      if (responseBytes > 0) {
+        text = "x".repeat(responseBytes);
+      }
+      await delay(delayMs);
 
       send({
         jsonrpc: "2.0",

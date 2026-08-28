@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createConnection, type Socket } from "node:net";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
@@ -330,6 +332,327 @@ test("runs list, describe, call, and tool-error commands over stdio", async () =
     assert.equal(toolErrorOutput.ok, false);
     assert.equal(toolErrorOutput.result.isError, true);
   } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("reuses one MCP connection across daemon-backed CLI commands", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "ijctl-daemon-test-"));
+  const daemonDirectory = join(directory, "daemon");
+  const startCountFile = join(directory, "server-starts.txt");
+  const configPath = join(directory, "config.json");
+  const cliPath = packageBinPath();
+  const serverPath = fileURLToPath(
+    new URL("./fixtures/mock-mcp-server.js", import.meta.url),
+  );
+
+  const config = {
+    mcpServers: {
+      intellij: {
+        command: process.execPath,
+        args: [serverPath],
+        env: {
+          MOCK_MCP_START_COUNT_FILE: startCountFile,
+        },
+      },
+    },
+  };
+  await writeFile(configPath, JSON.stringify(config));
+
+  const run = (argumentsValue: string[]) => {
+    const command = process.platform === "win32" ? process.execPath : cliPath;
+    const commandArguments = [
+      ...(process.platform === "win32" ? [cliPath] : []),
+      "--config",
+      configPath,
+      ...argumentsValue,
+    ];
+
+    return spawnSync(command, commandArguments, {
+      cwd: packageRoot,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        IJCTL_DAEMON_DIR: daemonDirectory,
+      },
+      timeout: 10_000,
+    });
+  };
+
+  try {
+    const start = run(["daemon", "start", "--idle-timeout", String(30_000)]);
+    assert.equal(start.status, 0, start.stderr);
+    const startOutput = JSON.parse(start.stdout) as {
+      running: boolean;
+      reused: boolean;
+      daemon: { pid: number };
+    };
+    assert.equal(startOutput.running, true);
+    assert.equal(startOutput.reused, false);
+
+    const repeatedStart = run(["daemon", "start"]);
+    assert.equal(repeatedStart.status, 0, repeatedStart.stderr);
+    const repeatedStartOutput = JSON.parse(repeatedStart.stdout) as {
+      reused: boolean;
+      daemon: { pid: number };
+    };
+    assert.equal(repeatedStartOutput.reused, true);
+    assert.equal(repeatedStartOutput.daemon.pid, startOutput.daemon.pid);
+
+    const tools = run(["tools"]);
+    assert.equal(tools.status, 0, tools.stderr);
+    const toolsOutput = JSON.parse(tools.stdout) as {
+      connectionMode: string;
+      tools: Array<{ name: string }>;
+    };
+    assert.equal(toolsOutput.connectionMode, "daemon");
+    assert.deepEqual(
+      toolsOutput.tools.map((tool) => tool.name),
+      ["echo", "fail"],
+    );
+
+    for (const text of ["first", "second"]) {
+      const call = run([
+        "call",
+        "echo",
+        "--args-json",
+        JSON.stringify({ text }),
+      ]);
+      assert.equal(call.status, 0, call.stderr);
+      const callOutput = JSON.parse(call.stdout) as {
+        connectionMode: string;
+        result: { content: Array<{ text: string }> };
+      };
+      assert.equal(callOutput.connectionMode, "daemon");
+      assert.equal(callOutput.result.content[0]?.text, text);
+    }
+
+    const toolError = run(["call", "fail"]);
+    assert.equal(toolError.status, 2, toolError.stderr);
+    const toolErrorOutput = JSON.parse(toolError.stdout) as {
+      connectionMode: string;
+      ok: boolean;
+    };
+    assert.equal(toolErrorOutput.connectionMode, "daemon");
+    assert.equal(toolErrorOutput.ok, false);
+
+    const starts = (await readFile(startCountFile, "utf8"))
+      .trim()
+      .split(/\r?\n/u);
+    assert.equal(starts.length, 1);
+
+    const directTools = run(["--no-daemon", "tools"]);
+    assert.equal(directTools.status, 0, directTools.stderr);
+    assert.equal(
+      (JSON.parse(directTools.stdout) as { connectionMode: string })
+        .connectionMode,
+      "direct",
+    );
+    assert.equal(
+      (await readFile(startCountFile, "utf8")).trim().split(/\r?\n/u).length,
+      2,
+    );
+
+    const status = run(["daemon", "status"]);
+    assert.equal(status.status, 0, status.stderr);
+    const statusOutput = JSON.parse(status.stdout) as {
+      running: boolean;
+      daemon: { pid: number };
+    };
+    assert.equal(statusOutput.running, true);
+    assert.equal(statusOutput.daemon.pid, startOutput.daemon.pid);
+
+    const stateFileName = (await readdir(daemonDirectory)).find((name) =>
+      name.endsWith(".json"),
+    );
+    assert.notEqual(stateFileName, undefined);
+    const daemonState = JSON.parse(
+      await readFile(join(daemonDirectory, stateFileName ?? ""), "utf8"),
+    ) as {
+      host: string;
+      port: number;
+      token: string;
+    };
+
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      const socket = createConnection({
+        host: daemonState.host,
+        port: daemonState.port,
+      });
+      socket.once("error", rejectPromise);
+      socket.once("connect", () => {
+        socket.write(
+          `${JSON.stringify({
+            protocolVersion: 1,
+            id: "abandoned-request",
+            token: daemonState.token,
+            timeout: 1_000,
+            method: "call",
+            tool: "echo",
+            arguments: {
+              text: "abandoned",
+              delayMs: 100,
+            },
+          })}\n`,
+          () => {
+            socket.resetAndDestroy();
+            resolvePromise();
+          },
+        );
+      });
+    });
+    await delay(150);
+
+    const statusAfterReset = run(["daemon", "status"]);
+    assert.equal(statusAfterReset.status, 0, statusAfterReset.stderr);
+    assert.equal(
+      (JSON.parse(statusAfterReset.stdout) as { running: boolean }).running,
+      true,
+    );
+
+    const stalledResponseSocket = await new Promise<Socket>(
+      (resolvePromise, rejectPromise) => {
+        const socket = createConnection({
+          host: daemonState.host,
+          port: daemonState.port,
+        });
+        socket.once("error", rejectPromise);
+        socket.once("connect", () => resolvePromise(socket));
+      },
+    );
+    stalledResponseSocket.pause();
+    await new Promise<void>((resolvePromise, rejectPromise) => {
+      stalledResponseSocket.write(
+        `${JSON.stringify({
+          protocolVersion: 1,
+          id: "stalled-response",
+          token: daemonState.token,
+          timeout: 2_000,
+          method: "call",
+          tool: "echo",
+          arguments: {
+            responseBytes: 8 * 1024 * 1024,
+          },
+        })}\n`,
+        (error) => {
+          if (error !== null && error !== undefined) {
+            rejectPromise(error);
+            return;
+          }
+          resolvePromise();
+        },
+      );
+    });
+    await delay(1_250);
+
+    const statusAfterStalledResponse = run(["daemon", "status"]);
+    stalledResponseSocket.destroy();
+    assert.equal(
+      statusAfterStalledResponse.status,
+      0,
+      statusAfterStalledResponse.stderr,
+    );
+    assert.equal(
+      (
+        JSON.parse(statusAfterStalledResponse.stdout) as {
+          running: boolean;
+        }
+      ).running,
+      true,
+    );
+
+    const lingeringSocket = await new Promise<Socket>(
+      (resolvePromise, rejectPromise) => {
+        const socket = createConnection({
+          host: daemonState.host,
+          port: daemonState.port,
+        });
+        socket.once("error", rejectPromise);
+        socket.once("connect", () => resolvePromise(socket));
+      },
+    );
+
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          intellij: {
+            ...config.mcpServers.intellij,
+            env: {
+              ...config.mcpServers.intellij.env,
+              CONFIG_REVISION: "2",
+            },
+          },
+        },
+      }),
+    );
+
+    const exactStop = run(["daemon", "stop"]);
+    assert.equal(exactStop.status, 0, exactStop.stderr);
+    assert.equal(
+      (JSON.parse(exactStop.stdout) as { stopped: boolean }).stopped,
+      false,
+    );
+
+    const daemonList = run(["daemon", "list"]);
+    assert.equal(daemonList.status, 0, daemonList.stderr);
+    const daemonListOutput = JSON.parse(daemonList.stdout) as {
+      daemons: Array<{ pid: number }>;
+    };
+    assert.deepEqual(
+      daemonListOutput.daemons.map((daemon) => daemon.pid),
+      [startOutput.daemon.pid],
+    );
+
+    const stop = run(["daemon", "stop", "--all"]);
+    lingeringSocket.destroy();
+    assert.equal(stop.status, 0, stop.stderr);
+    const stopOutput = JSON.parse(stop.stdout) as {
+      stopped: boolean;
+      stoppedCount: number;
+    };
+    assert.equal(stopOutput.stopped, true);
+    assert.equal(stopOutput.stoppedCount, 1);
+
+    const stoppedStatus = run(["daemon", "status"]);
+    assert.equal(stoppedStatus.status, 0, stoppedStatus.stderr);
+    assert.equal(
+      (JSON.parse(stoppedStatus.stdout) as { running: boolean }).running,
+      false,
+    );
+
+    await writeFile(configPath, JSON.stringify(config));
+
+    const oversizedIdleTimeout = run([
+      "daemon",
+      "start",
+      "--idle-timeout",
+      "2147483648",
+    ]);
+    assert.notEqual(oversizedIdleTimeout.status, 0);
+    assert.match(oversizedIdleTimeout.stderr, /2147483647/u);
+
+    const oversizedRequestTimeout = run([
+      "--timeout",
+      "2147483648",
+      "daemon",
+      "status",
+    ]);
+    assert.notEqual(oversizedRequestTimeout.status, 0);
+    assert.match(oversizedRequestTimeout.stderr, /2147483647/u);
+
+    const idleStart = run(["daemon", "start", "--idle-timeout", String(100)]);
+    assert.equal(idleStart.status, 0, idleStart.stderr);
+    await delay(250);
+
+    const idleStatus = run(["daemon", "status"]);
+    assert.equal(idleStatus.status, 0, idleStatus.stderr);
+    assert.equal(
+      (JSON.parse(idleStatus.stdout) as { running: boolean }).running,
+      false,
+    );
+  } finally {
+    run(["daemon", "stop", "--all"]);
     await rm(directory, { recursive: true, force: true });
   }
 });

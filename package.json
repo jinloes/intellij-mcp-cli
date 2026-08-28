@@ -1,6 +1,6 @@
 {
   "name": "intellij-mcp-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A shell-friendly MCP client for exposing IntelliJ IDEA tools to coding agents.",
   "type": "module",
   "bin": {

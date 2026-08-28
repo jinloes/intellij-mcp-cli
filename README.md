@@ -3,7 +3,10 @@
 `ijctl` is a shell-friendly MCP client that exposes tools from IntelliJ IDEA's integrated MCP server as deterministic JSON commands. It is intended for coding agents such as GitHub Copilot CLI when direct MCP registration is unavailable but use of the IDE's MCP server is permitted.
 
 ```text
-GitHub Copilot CLI -> ijctl -> IntelliJ MCP server -> IntelliJ project model
+GitHub Copilot CLI -> ijctl -> optional connection daemon -> IntelliJ MCP server
+                                                               |
+                                                               v
+                                                IntelliJ project model
 ```
 
 ## Requirements
@@ -114,6 +117,35 @@ export IJCTL_PROJECT_PATH="$(git rev-parse --show-toplevel)"
 
 Recompute it after moving the shell to a different project. A static project entry does not require this variable; use that entry's server name instead.
 
+Start a persistent connection for agent workflows:
+
+```sh
+ijctl --server intellij-current daemon start
+```
+
+Native MCP clients normally keep one transport open and pay only per-request
+RPC cost. Separate CLI invocations cannot do that by themselves, so the daemon
+holds the IntelliJ MCP connection while each `ijctl` command uses a short-lived,
+authenticated loopback request. A daemon is isolated by the fully resolved
+server configuration, including a dynamic project or worktree path.
+
+The daemon stops after 15 minutes without a request by default. Manage it with:
+
+```sh
+ijctl --server intellij-current daemon status
+ijctl daemon list
+ijctl --server intellij-current daemon start --idle-timeout 1800000
+ijctl --server intellij-current daemon stop
+ijctl daemon stop --all
+```
+
+`doctor`, `tools`, `describe`, and `call` automatically use a running daemon and
+report `"connectionMode": "daemon"`. They retain the original direct connection
+behavior when no daemon is running. Pass `--no-daemon` before the subcommand to
+bypass a running daemon for one invocation. Because configuration changes create
+a new isolated identity, `daemon list` and `daemon stop --all` remain available
+without resolving the current MCP configuration.
+
 Verify the connection:
 
 ```sh
@@ -154,6 +186,7 @@ All successful output is JSON on stdout. Configuration and connection errors are
 --transport <transport>     streamable-http or sse
 --timeout <milliseconds>    connection and request timeout
 --pretty                    pretty-print JSON
+--no-daemon                 bypass a running connection daemon
 ```
 
 ## Install the Copilot plugin
@@ -184,9 +217,10 @@ session:
 /skills info intellij-mcp-tools
 ```
 
-The skill teaches Copilot to select the requested project or worktree, discover
-tools progressively with `ijctl tools` and `ijctl describe`, follow the active
-IntelliJ schema, preserve JSON output, and avoid unauthorized side effects.
+The skill teaches Copilot to prefer IntelliJ for semantic and IDE-aware work,
+select the requested project or worktree, start and reuse the connection daemon,
+discover tools progressively, follow the active IntelliJ schema, preserve JSON
+output, and avoid unauthorized side effects.
 
 ## Development
 
@@ -194,7 +228,7 @@ IntelliJ schema, preserve JSON output, and avoid unauthorized side effects.
 npm run check
 ```
 
-The test suite builds and executes the production package bin. It verifies the Node.js runtime guard, configuration behavior, tool discovery, schema inspection, successful stdio calls, and MCP tool errors against a mock server.
+The test suite builds and executes the production package bin. It verifies the Node.js runtime guard, configuration behavior, tool discovery, schema inspection, successful stdio calls, persistent daemon reuse and cleanup, disconnected-client isolation, and MCP tool errors against a mock server.
 
 Repository documentation:
 
@@ -206,6 +240,7 @@ Repository documentation:
 
 - Stdio, Streamable HTTP, and legacy SSE transports
 - MCP tool discovery, description, and invocation
+- Optional persistent, per-project MCP connection reuse
 - Standard `mcpServers` and `servers` configuration shapes
 - Environment interpolation for commands, arguments, environment values, URLs, and headers
 

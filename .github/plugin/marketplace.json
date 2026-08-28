@@ -11,7 +11,7 @@
     {
       "name": "intellij-mcp-tools",
       "description": "Use IntelliJ IDEA's MCP tools through the ijctl CLI for IDE-aware code analysis and operations.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "."
     }
   ]

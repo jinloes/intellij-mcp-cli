@@ -7,20 +7,37 @@ import {
 
 import {
   resolveServer,
+  type ResolvedServer,
   type HttpTransport,
   type ResolveServerOptions,
 } from "./config.js";
+import {
+  daemonCall,
+  daemonDoctor,
+  daemonStatus,
+  daemonTools,
+  DEFAULT_DAEMON_IDLE_TIMEOUT,
+  listDaemons,
+  MAX_TIMER_DELAY,
+  notifyDaemonReady,
+  notifyDaemonStartupError,
+  runDaemon,
+  startDaemon,
+  stopAllDaemons,
+  stopDaemon,
+} from "./daemon.js";
 import { CliError, errorMessage } from "./errors.js";
 import { readToolArguments } from "./input.js";
 import {
   callTool,
   connectToServer,
+  connectionDetails,
   listTools,
   type McpConnection,
 } from "./mcp.js";
 import { writeJson } from "./output.js";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 interface GlobalOptions {
   config?: string;
@@ -29,6 +46,7 @@ interface GlobalOptions {
   transport?: HttpTransport;
   timeout: number;
   pretty?: boolean;
+  daemon?: boolean;
 }
 
 interface ToolsOptions {
@@ -40,10 +58,24 @@ interface CallOptions {
   argsFile?: string;
 }
 
+interface DaemonStartOptions {
+  idleTimeout: number;
+}
+
+interface DaemonStopOptions {
+  all?: boolean;
+}
+
 function parsePositiveInteger(value: string): number {
   const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
-    throw new InvalidArgumentError("Expected a positive integer.");
+  if (
+    !Number.isSafeInteger(parsed) ||
+    parsed <= 0 ||
+    parsed > MAX_TIMER_DELAY
+  ) {
+    throw new InvalidArgumentError(
+      `Expected an integer from 1 through ${MAX_TIMER_DELAY}.`,
+    );
   }
 
   return parsed;
@@ -65,21 +97,56 @@ function resolveOptions(program: Command): ResolveServerOptions {
   };
 }
 
-async function withConnection<T>(
+async function selectedServer(program: Command): Promise<ResolvedServer> {
+  return resolveServer(resolveOptions(program));
+}
+
+async function withDirectConnection<T>(
   program: Command,
+  server: ResolvedServer,
   operation: (connection: McpConnection) => Promise<T>,
 ): Promise<T> {
   const options = globalOptions(program);
-  const connection = await connectToServer(
-    await resolveServer(resolveOptions(program)),
-    options.timeout,
-  );
+  const connection = await connectToServer(server, options.timeout);
 
   try {
     return await operation(connection);
   } finally {
     await connection.client.close();
   }
+}
+
+async function withBackend<T>(
+  program: Command,
+  daemonOperation: (
+    server: ResolvedServer,
+    timeout: number,
+  ) => Promise<T | undefined>,
+  directOperation: (connection: McpConnection) => Promise<T>,
+): Promise<{
+  connectionMode: "daemon" | "direct";
+  server: ResolvedServer;
+  value: T;
+}> {
+  const options = globalOptions(program);
+  const server = await selectedServer(program);
+
+  if (options.daemon !== false) {
+    const daemonValue = await daemonOperation(server, options.timeout);
+    if (daemonValue !== undefined) {
+      return {
+        connectionMode: "daemon",
+        server,
+        value: daemonValue,
+      };
+    }
+  }
+
+  return {
+    connectionMode: "direct",
+    server,
+    value: await withDirectConnection(program, server, directOperation),
+  };
 }
 
 function compactTool(tool: Awaited<ReturnType<typeof listTools>>[number]) {
@@ -129,6 +196,7 @@ const program = new Command()
     60_000,
   )
   .option("--pretty", "pretty-print JSON output")
+  .option("--no-daemon", "bypass a running ijctl connection daemon")
   .showHelpAfterError()
   .exitOverride();
 
@@ -136,25 +204,36 @@ program
   .command("doctor")
   .description("verify the MCP connection and summarize the server")
   .action(async () => {
-    await withConnection(program, async (connection) => {
-      const tools = await listTools(connection, globalOptions(program).timeout);
-      writeJson(
-        process.stdout,
-        {
-          ok: true,
-          configuredServer: connection.server.name,
-          configurationSource: connection.server.source,
-          transport: connection.transport,
-          protocolVersion:
-            connection.client.getNegotiatedProtocolVersion() ?? null,
-          protocolEra: connection.client.getProtocolEra() ?? null,
-          serverInfo: connection.client.getServerVersion() ?? null,
-          capabilities: connection.client.getServerCapabilities() ?? {},
-          toolCount: tools.length,
-        },
-        globalOptions(program).pretty ?? false,
-      );
-    });
+    const result = await withBackend(
+      program,
+      async (server, timeout) => {
+        const daemonResult = await daemonDoctor(server, timeout);
+        return daemonResult === undefined
+          ? undefined
+          : {
+              connection: daemonResult.info.connection,
+              toolCount: daemonResult.toolCount,
+            };
+      },
+      async (connection) => ({
+        connection: connectionDetails(connection),
+        toolCount: (await listTools(connection, globalOptions(program).timeout))
+          .length,
+      }),
+    );
+
+    writeJson(
+      process.stdout,
+      {
+        ok: true,
+        configuredServer: result.server.name,
+        configurationSource: result.server.source,
+        connectionMode: result.connectionMode,
+        ...result.value.connection,
+        toolCount: result.value.toolCount,
+      },
+      globalOptions(program).pretty ?? false,
+    );
   });
 
 program
@@ -162,18 +241,22 @@ program
   .description("list tools exposed by the selected MCP server")
   .option("--full", "include complete MCP tool schemas")
   .action(async (commandOptions: ToolsOptions) => {
-    await withConnection(program, async (connection) => {
-      const tools = await listTools(connection, globalOptions(program).timeout);
-      writeJson(
-        process.stdout,
-        {
-          ok: true,
-          server: connection.server.name,
-          tools: commandOptions.full ? tools : tools.map(compactTool),
-        },
-        globalOptions(program).pretty ?? false,
-      );
-    });
+    const result = await withBackend(program, daemonTools, (connection) =>
+      listTools(connection, globalOptions(program).timeout),
+    );
+
+    writeJson(
+      process.stdout,
+      {
+        ok: true,
+        server: result.server.name,
+        connectionMode: result.connectionMode,
+        tools: commandOptions.full
+          ? result.value
+          : result.value.map(compactTool),
+      },
+      globalOptions(program).pretty ?? false,
+    );
   });
 
 program
@@ -181,26 +264,27 @@ program
   .description("show the complete schema for one MCP tool")
   .argument("<tool>", "tool name")
   .action(async (toolName: string) => {
-    await withConnection(program, async (connection) => {
-      const tools = await listTools(connection, globalOptions(program).timeout);
-      const tool = tools.find((candidate) => candidate.name === toolName);
+    const result = await withBackend(program, daemonTools, (connection) =>
+      listTools(connection, globalOptions(program).timeout),
+    );
+    const tool = result.value.find((candidate) => candidate.name === toolName);
 
-      if (tool === undefined) {
-        throw new CliError(
-          `Tool "${toolName}" was not found. Run "ijctl tools" to list available tools.`,
-        );
-      }
-
-      writeJson(
-        process.stdout,
-        {
-          ok: true,
-          server: connection.server.name,
-          tool,
-        },
-        globalOptions(program).pretty ?? false,
+    if (tool === undefined) {
+      throw new CliError(
+        `Tool "${toolName}" was not found. Run "ijctl tools" to list available tools.`,
       );
-    });
+    }
+
+    writeJson(
+      process.stdout,
+      {
+        ok: true,
+        server: result.server.name,
+        connectionMode: result.connectionMode,
+        tool,
+      },
+      globalOptions(program).pretty ?? false,
+    );
   });
 
 program
@@ -215,30 +299,199 @@ program
   .action(async (toolName: string, commandOptions: CallOptions) => {
     const argumentsValue = await readToolArguments(commandOptions);
 
-    await withConnection(program, async (connection) => {
-      const result = await callTool(
-        connection,
-        toolName,
-        argumentsValue,
-        globalOptions(program).timeout,
-      );
-      const ok = result.isError !== true;
+    const backend = await withBackend(
+      program,
+      (server, timeout) =>
+        daemonCall(server, toolName, argumentsValue, timeout),
+      (connection) =>
+        callTool(
+          connection,
+          toolName,
+          argumentsValue,
+          globalOptions(program).timeout,
+        ),
+    );
+    const ok = backend.value.isError !== true;
 
+    writeJson(
+      process.stdout,
+      {
+        ok,
+        server: backend.server.name,
+        connectionMode: backend.connectionMode,
+        tool: toolName,
+        result: backend.value,
+      },
+      globalOptions(program).pretty ?? false,
+    );
+
+    if (!ok) {
+      process.exitCode = 2;
+    }
+  });
+
+const daemonCommand = program
+  .command("daemon")
+  .description("manage a persistent IntelliJ MCP connection");
+
+daemonCommand
+  .command("start")
+  .description("start or reuse the connection daemon")
+  .option(
+    "--idle-timeout <milliseconds>",
+    "stop after this period without a request",
+    parsePositiveInteger,
+    DEFAULT_DAEMON_IDLE_TIMEOUT,
+  )
+  .action(async (commandOptions: DaemonStartOptions) => {
+    const server = await selectedServer(program);
+    const entryPath = process.argv[1];
+    if (entryPath === undefined) {
+      throw new CliError("Unable to determine the ijctl executable path.");
+    }
+
+    let childArguments: string[];
+    if (server.source === "command line") {
+      if (server.config.kind !== "http") {
+        throw new CliError(
+          "A command-line MCP server must use an HTTP transport.",
+        );
+      }
+      childArguments = [
+        "--url",
+        server.config.url,
+        "--transport",
+        server.config.transport,
+      ];
+    } else {
+      childArguments = [
+        "--config",
+        server.source,
+        "--server",
+        server.name,
+        ...(server.config.kind === "http"
+          ? ["--transport", server.config.transport]
+          : []),
+      ];
+    }
+    childArguments.push(
+      "--timeout",
+      String(globalOptions(program).timeout),
+      "_daemon",
+      "--idle-timeout",
+      String(commandOptions.idleTimeout),
+    );
+
+    const result = await startDaemon(
+      server,
+      entryPath,
+      childArguments,
+      globalOptions(program).timeout,
+    );
+    writeJson(
+      process.stdout,
+      {
+        ok: true,
+        server: server.name,
+        running: true,
+        reused: result.reused,
+        daemon: result.info,
+      },
+      globalOptions(program).pretty ?? false,
+    );
+  });
+
+daemonCommand
+  .command("list")
+  .description("list all connection daemons")
+  .action(async () => {
+    const daemons = await listDaemons(globalOptions(program).timeout);
+    writeJson(
+      process.stdout,
+      {
+        ok: true,
+        daemons,
+      },
+      globalOptions(program).pretty ?? false,
+    );
+  });
+
+daemonCommand
+  .command("status")
+  .description("show connection daemon status")
+  .action(async () => {
+    const server = await selectedServer(program);
+    const status = await daemonStatus(server, globalOptions(program).timeout);
+    writeJson(
+      process.stdout,
+      status === undefined
+        ? {
+            ok: true,
+            server: server.name,
+            running: false,
+          }
+        : {
+            ok: true,
+            server: server.name,
+            running: true,
+            daemon: status,
+          },
+      globalOptions(program).pretty ?? false,
+    );
+  });
+
+daemonCommand
+  .command("stop")
+  .description("stop the connection daemon")
+  .option("--all", "stop all connection daemons")
+  .action(async (commandOptions: DaemonStopOptions) => {
+    if (commandOptions.all === true) {
+      const stoppedCount = await stopAllDaemons(globalOptions(program).timeout);
       writeJson(
         process.stdout,
         {
-          ok,
-          server: connection.server.name,
-          tool: toolName,
-          result,
+          ok: true,
+          stopped: stoppedCount > 0,
+          stoppedCount,
         },
         globalOptions(program).pretty ?? false,
       );
+      return;
+    }
 
-      if (!ok) {
-        process.exitCode = 2;
-      }
-    });
+    const server = await selectedServer(program);
+    const stopped = await stopDaemon(server, globalOptions(program).timeout);
+    writeJson(
+      process.stdout,
+      {
+        ok: true,
+        server: server.name,
+        stopped,
+      },
+      globalOptions(program).pretty ?? false,
+    );
+  });
+
+program
+  .command("_daemon", { hidden: true })
+  .option(
+    "--idle-timeout <milliseconds>",
+    "stop after this period without a request",
+    parsePositiveInteger,
+    DEFAULT_DAEMON_IDLE_TIMEOUT,
+  )
+  .action(async (commandOptions: DaemonStartOptions) => {
+    try {
+      await runDaemon(
+        await selectedServer(program),
+        globalOptions(program).timeout,
+        commandOptions.idleTimeout,
+        notifyDaemonReady,
+      );
+    } catch (error) {
+      notifyDaemonStartupError(error);
+      throw error;
+    }
   });
 
 async function main(): Promise<void> {

@@ -11,13 +11,25 @@ import type { ResolvedServer } from "./config.js";
 import { CliError, errorMessage } from "./errors.js";
 
 const CLIENT_NAME = "intellij-mcp-cli";
-const CLIENT_VERSION = "0.1.0";
+const CLIENT_VERSION = "0.2.0";
 
 export interface McpConnection {
   client: Client;
   server: ResolvedServer;
   transport: string;
 }
+
+export function connectionDetails(connection: McpConnection) {
+  return {
+    transport: connection.transport,
+    protocolVersion: connection.client.getNegotiatedProtocolVersion() ?? null,
+    protocolEra: connection.client.getProtocolEra() ?? null,
+    serverInfo: connection.client.getServerVersion() ?? null,
+    capabilities: connection.client.getServerCapabilities() ?? {},
+  };
+}
+
+export type McpConnectionDetails = ReturnType<typeof connectionDetails>;
 
 function createHttpRequestInit(
   headers: Record<string, string>,

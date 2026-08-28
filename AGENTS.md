@@ -48,7 +48,9 @@ Do not commit generated `dist/`, `dist-test/`, local `ijctl.config.json`, or
   distributes the skill but does not install the npm CLI.
 - Preserve the output contract: successful and tool-level results go to stdout;
   operational errors go to stderr; MCP tool errors exit with status 2.
-- Close MCP clients in all command success and failure paths.
+- Close direct MCP clients in all command success and failure paths. Daemon-owned
+  clients may persist between commands but must close on idle, explicit stop,
+  transport failure, or process shutdown.
 - Do not embed credentials in MCP URLs. Use supported header configuration for
   Streamable HTTP; legacy SSE does not support custom headers.
 

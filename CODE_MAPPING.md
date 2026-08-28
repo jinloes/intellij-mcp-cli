@@ -12,12 +12,14 @@ src/cli.ts
 
 src/cli-main.ts
   -> src/config.ts
+  -> src/daemon.ts
   -> src/errors.ts
   -> src/input.ts
   -> src/mcp.ts
   -> src/output.ts
 
 src/config.ts -> src/errors.ts, zod
+src/daemon.ts -> src/config.ts, src/errors.ts, src/mcp.ts
 src/input.ts  -> src/errors.ts
 src/mcp.ts    -> src/config.ts, src/errors.ts, @modelcontextprotocol/client
 ```
@@ -28,19 +30,20 @@ src/mcp.ts    -> src/config.ts, src/errors.ts, @modelcontextprotocol/client
 | --------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `src/cli.ts`          | Package bin and dependency-free startup gate                                                                     | Rejects Node.js below 20 with a JSON error, then dynamically loads the command implementation               |
 | `src/node-version.ts` | Runtime compatibility policy                                                                                     | `MINIMUM_NODE_MAJOR`, `isSupportedNodeVersion`                                                              |
-| `src/cli-main.ts`     | Commander program, commands, orchestration, and process exit handling                                            | `doctor`, `tools`, `describe`, and `call`; connection lifecycle and JSON response selection                 |
+| `src/cli-main.ts`     | Commander program, commands, orchestration, and process exit handling                                            | Direct or daemon-backed `doctor`, `tools`, `describe`, and `call`; daemon lifecycle; JSON responses         |
 | `src/config.ts`       | Config validation, environment interpolation, file discovery, server selection, and HTTP transport normalization | `parseConfigText`, `findConfigPath`, `loadConfig`, `selectServer`, `resolveServer`, and server config types |
-| `src/mcp.ts`          | MCP client and transport adapter                                                                                 | Creates stdio, Streamable HTTP, or legacy SSE transports; connects, lists tools, and calls tools            |
+| `src/daemon.ts`       | Persistent MCP connection daemon and authenticated loopback client                                               | Per-server identity, private state, list/start/status/stop lifecycle, idle shutdown, and request forwarding |
+| `src/mcp.ts`          | MCP client and transport adapter                                                                                 | Creates stdio, Streamable HTTP, or legacy SSE transports; connects, describes, lists, and calls             |
 | `src/input.ts`        | Tool argument loading and validation                                                                             | Reads `--args-json`, files, or stdin and requires a JSON object                                             |
 | `src/output.ts`       | Machine-readable output                                                                                          | Writes compact or pretty JSON followed by a newline                                                         |
 | `src/errors.ts`       | CLI error model and unknown-error formatting                                                                     | `CliError`, `errorMessage`                                                                                  |
 
 ## Test modules
 
-| File                               | Coverage                                                                                                                                    |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test/project.test.ts`             | Node compatibility, Volta/engine alignment, production-bin startup, configuration behavior, server selection, and end-to-end stdio commands |
-| `test/fixtures/mock-mcp-server.ts` | Line-delimited JSON-RPC MCP fixture exposing `echo` and `fail` tools                                                                        |
+| File                               | Coverage                                                                                                                               |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/project.test.ts`             | Node compatibility, manifests, production-bin startup, configuration, direct stdio commands, and persistent daemon lifecycle and reuse |
+| `test/fixtures/mock-mcp-server.ts` | Line-delimited JSON-RPC MCP fixture exposing tool success, delay, failure, and process-start counting                                  |
 
 Tests compile to `dist-test/`, but process-level CLI assertions execute the
 production bin path from `package.json`.
@@ -75,4 +78,5 @@ production bin path from `package.json`.
 | Legacy SSE transport                   | `src/config.ts`, `src/mcp.ts`                                                          | Inference test only; no runtime fixture yet                |
 | Tool discovery and schema description  | `src/cli-main.ts`, `src/mcp.ts`                                                        | `test/project.test.ts`                                     |
 | Tool invocation and tool-level errors  | `src/cli-main.ts`, `src/mcp.ts`                                                        | `test/project.test.ts`                                     |
+| Persistent MCP connection reuse        | `src/cli-main.ts`, `src/daemon.ts`, `src/mcp.ts`                                       | `test/project.test.ts`, `test/fixtures/mock-mcp-server.ts` |
 | JSON output formatting                 | `src/output.ts`, `src/cli-main.ts`                                                     | Covered through CLI integration assertions                 |
