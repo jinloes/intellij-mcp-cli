@@ -12,9 +12,11 @@ and OAuth are outside the current scope.
 The repository has two independently installed parts:
 
 - The npm CLI provides the `ijctl` executable.
-- The Copilot plugin provides instructions for using that executable.
+- The Copilot skill provides instructions for using that executable.
 
-Installing the plugin does not install or configure the CLI.
+The skill can be loaded from a Copilot CLI plugin or installed as a personal
+agent skill for IntelliJ and other Copilot clients. Neither installation path
+installs or configures the CLI.
 
 ## System context
 
@@ -198,15 +200,20 @@ Daemon isolation and lifecycle:
 
 ## Distribution architecture
 
-`.github/plugin/marketplace.json` makes the repository a self-hosted marketplace
-named `jinloes-plugins`. Its `intellij-mcp-tools` entry points to the repository
-root, where `plugin.json` identifies the plugin and its `skills` field points to
-the existing `skills/` directory.
+`skills/intellij-mcp-tools/SKILL.md` is the canonical skill source. Copilot
+clients have separate installation state and consume it through different
+paths:
 
-Installation has two explicit steps:
+- GitHub Copilot in IntelliJ loads a personal copy installed in
+  `~/.copilot/skills` by `gh skill install --agent github-copilot --scope user`.
+- GitHub Copilot CLI can load the skill from this repository's plugin.
+  `.github/plugin/marketplace.json` defines the self-hosted `jinloes-plugins`
+  marketplace, whose `intellij-mcp-tools` entry points to the repository root.
+  There, `plugin.json` identifies the plugin and points its `skills` field to
+  the canonical `skills/` directory.
 
-1. Register `jinloes/intellij-mcp-cli` as a marketplace.
-2. Install `intellij-mcp-tools@jinloes-plugins`.
+Installing the Copilot CLI plugin does not make the skill visible in IntelliJ.
+Conversely, installing the personal skill does not register the CLI plugin.
 
 The plugin name and npm package name differ intentionally:
 

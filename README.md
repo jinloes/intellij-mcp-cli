@@ -189,12 +189,43 @@ All successful output is JSON on stdout. Configuration and connection errors are
 --no-daemon                 bypass a running connection daemon
 ```
 
-## Install the Copilot plugin
+## Install the Copilot skill
 
-The plugin teaches Copilot how to discover and safely invoke IntelliJ MCP tools.
+The skill teaches Copilot how to discover and safely invoke IntelliJ MCP tools.
 It does not install the `ijctl` executable, so build and link the CLI first.
 
-Register this repository's marketplace, then install the plugin:
+Copilot clients do not share skill installation state. In particular, the
+IntelliJ plugin does not read plugins installed by Copilot CLI.
+
+### GitHub Copilot in IntelliJ
+
+Install the skill at user scope so agent mode can load it in every IntelliJ
+project:
+
+```sh
+gh skill install jinloes/intellij-mcp-cli intellij-mcp-tools \
+  --agent github-copilot \
+  --scope user
+gh skill list
+```
+
+Start a new agent mode chat after installation. The skill is available as
+`/intellij-mcp-tools`.
+
+To test unpublished changes from this checkout, replace the install command
+above with:
+
+```sh
+gh skill install . intellij-mcp-tools \
+  --from-local \
+  --agent github-copilot \
+  --scope user \
+  --force
+```
+
+### GitHub Copilot CLI
+
+Register this repository's marketplace, then install the CLI plugin:
 
 ```sh
 copilot plugin marketplace add jinloes/intellij-mcp-cli
@@ -209,7 +240,7 @@ copilot plugin marketplace update jinloes-plugins
 copilot plugin update intellij-mcp-tools
 ```
 
-Marketplace installs track the repository's default branch. To test skill
+Marketplace installs track the repository's default branch. To test CLI plugin
 changes from another branch or a local checkout, load that checkout directly:
 
 ```sh

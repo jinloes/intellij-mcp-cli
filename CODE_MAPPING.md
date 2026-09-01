@@ -53,15 +53,15 @@ production bin path from `package.json`.
 | File                                 | Responsibility                                                                                     |
 | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
 | `package.json`                       | Package metadata, `ijctl` bin mapping, Node engine/Volta pin, dependencies, and build/test scripts |
-| `plugin.json`                        | Copilot plugin metadata and the `skills/` component path used by direct repository installation    |
-| `.github/plugin/marketplace.json`    | Self-hosted `jinloes-plugins` marketplace catalog and installable plugin entry                     |
+| `plugin.json`                        | Copilot CLI plugin metadata and the canonical `skills/` component path                             |
+| `.github/plugin/marketplace.json`    | Self-hosted `jinloes-plugins` marketplace catalog and installable Copilot CLI plugin entry         |
 | `package-lock.json`                  | Reproducible npm dependency graph                                                                  |
 | `tsconfig.json`                      | Strict production TypeScript build from `src/` to `dist/`                                          |
 | `tsconfig.test.json`                 | Test compilation from `src/` and `test/` to `dist-test/`                                           |
 | `README.md`                          | Installation, configuration, usage, and supported feature contract                                 |
 | `ARCHITECTURE.md`                    | System design, boundaries, and end-to-end flows                                                    |
 | `AGENTS.md`                          | Repository-wide implementation and documentation rules                                             |
-| `skills/intellij-mcp-tools/SKILL.md` | Copilot instructions for safe, observable, progressive use of `ijctl`                              |
+| `skills/intellij-mcp-tools/SKILL.md` | Canonical Copilot skill installed through the CLI plugin or as a user-scoped skill for IntelliJ    |
 
 ## Feature-to-code index
 
