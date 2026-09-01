@@ -5,6 +5,10 @@ description: Prefer IntelliJ IDEA's MCP tools through the ijctl command for sema
 
 Use `ijctl` when IntelliJ's project model or IDE-only behavior is more reliable than text search or ordinary shell commands.
 
+## Visible activation
+
+Immediately before the first `ijctl` command in each assistant turn, tell the user: **Using `intellij-mcp-tools` via `ijctl` for IntelliJ MCP.** Put this notice in visible response text, not hidden reasoning, and issue the command in the same turn. Do not show the notice unless an `ijctl` command will run.
+
 ## Tool-selection policy
 
 When this skill is invoked, use `ijctl` first for semantic symbol lookup, call hierarchy, symbol information, inspections, project modules and dependencies, refactoring, builds, run configurations, debugging, database operations, and other IDE-aware behavior.

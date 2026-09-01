@@ -217,6 +217,11 @@ The npm package version, plugin manifest version, and marketplace plugin-entry
 version remain aligned so a repository revision describes one compatible
 CLI-and-skill release. The marketplace metadata has its own catalog version.
 
+The skill makes invocation observable by requiring a visible activation notice
+immediately before the first `ijctl` command in an assistant turn. Skill-listing
+commands establish installation only; the notice and accompanying shell command
+distinguish an actual invocation.
+
 ## Trust and security boundaries
 
 - MCP configuration and tool results are untrusted input.

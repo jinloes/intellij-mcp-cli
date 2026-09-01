@@ -209,6 +209,13 @@ copilot plugin marketplace update jinloes-plugins
 copilot plugin update intellij-mcp-tools
 ```
 
+Marketplace installs track the repository's default branch. To test skill
+changes from another branch or a local checkout, load that checkout directly:
+
+```sh
+copilot --plugin-dir "$(git rev-parse --show-toplevel)"
+```
+
 Start a new Copilot CLI session, or reload and verify the skill in an active
 session:
 
@@ -216,6 +223,14 @@ session:
 /skills reload
 /skills info intellij-mcp-tools
 ```
+
+`/skills info` confirms that Copilot loaded the skill; it does not prove that a
+specific request invoked it. On invocation, Copilot displays **Using
+`intellij-mcp-tools` via `ijctl` for IntelliJ MCP.** immediately before the
+visible shell call to `ijctl`. The command output's `connectionMode` field then
+shows whether `ijctl` used the persistent daemon or a direct MCP connection. If
+the notice and `ijctl` call are absent, the skill was not visibly used for that
+request.
 
 The skill teaches Copilot to prefer IntelliJ for semantic and IDE-aware work,
 select the requested project or worktree, start and reuse the connection daemon,

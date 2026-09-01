@@ -54,6 +54,10 @@ const marketplaceManifest = JSON.parse(
     "utf8",
   ),
 ) as MarketplaceManifest;
+const skillInstructions = await readFile(
+  join(packageRoot, "skills", "intellij-mcp-tools", "SKILL.md"),
+  "utf8",
+);
 
 function packageBinPath(): string {
   const binTarget = packageManifest.bin?.ijctl;
@@ -96,6 +100,21 @@ test("keeps the marketplace entry aligned with the plugin", () => {
     version: pluginManifest.version,
     source: ".",
   });
+});
+
+test("makes Copilot skill invocation visible with the accompanying command", () => {
+  assert.match(
+    skillInstructions,
+    /Immediately before the first `ijctl` command in each assistant turn/,
+  );
+  assert.match(
+    skillInstructions,
+    /Using `intellij-mcp-tools` via `ijctl` for IntelliJ MCP\./,
+  );
+  assert.match(
+    skillInstructions,
+    /Do not show the notice unless an `ijctl` command will run\./,
+  );
 });
 
 test("code map lists every source module", async () => {

@@ -61,7 +61,7 @@ production bin path from `package.json`.
 | `README.md`                          | Installation, configuration, usage, and supported feature contract                                 |
 | `ARCHITECTURE.md`                    | System design, boundaries, and end-to-end flows                                                    |
 | `AGENTS.md`                          | Repository-wide implementation and documentation rules                                             |
-| `skills/intellij-mcp-tools/SKILL.md` | Copilot instructions for safe progressive use of `ijctl`                                           |
+| `skills/intellij-mcp-tools/SKILL.md` | Copilot instructions for safe, observable, progressive use of `ijctl`                              |
 
 ## Feature-to-code index
 
