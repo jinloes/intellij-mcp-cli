@@ -83,7 +83,207 @@ for await (const line of input) {
               additionalProperties: false,
             },
           },
-        ],
+          {
+            name: "protocol_failure",
+            description: "Return a JSON-RPC request failure.",
+            inputSchema: {
+              type: "object",
+              additionalProperties: false,
+            },
+            annotations: {
+              readOnlyHint: true,
+            },
+          },
+          {
+            name: "search_symbol",
+            description: "Search symbols.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                q: { type: "string" },
+                paths: { type: "array", items: { type: "string" } },
+                include_external: { type: "boolean" },
+                limit: { type: "integer" },
+              },
+              required: ["q"],
+            },
+            annotations: {
+              readOnlyHint: true,
+            },
+          },
+          {
+            name: "analyze_calls",
+            description: "Analyze calls.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                symbolFqn: { type: "string" },
+                analysisKind: { type: "string" },
+                depth: { type: "integer" },
+                maxChildren: { type: "integer" },
+                maxNodes: { type: "integer" },
+                treePath: { type: "array", items: { type: "string" } },
+                childOffset: { type: "integer" },
+                timeout: { type: "integer" },
+              },
+              required: ["symbolFqn", "analysisKind"],
+            },
+            annotations: {
+              readOnlyHint: true,
+            },
+          },
+          {
+            name: "get_file_problems",
+            description: "Inspect a file.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                filePath: { type: "string" },
+                errorsOnly: { type: "boolean" },
+                timeout: { type: "integer" },
+              },
+              required: ["filePath"],
+            },
+            annotations: {
+              readOnlyHint: true,
+            },
+          },
+          {
+            name: "get_project_modules",
+            description: "List modules.",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+            annotations: {
+              readOnlyHint: true,
+            },
+          },
+          {
+            name: "get_project_dependencies",
+            description: "List dependencies.",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+            annotations: {
+              readOnlyHint: true,
+            },
+          },
+          {
+            name: "rename_refactoring",
+            description: "Rename a symbol.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                pathInProject: { type: "string" },
+                symbolName: { type: "string" },
+                newName: { type: "string" },
+              },
+              required: ["pathInProject", "symbolName", "newName"],
+            },
+          },
+          {
+            name: "build_project",
+            description: "Build the project.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                rebuild: { type: "boolean" },
+                filesToRebuild: {
+                  type: "array",
+                  items: { type: "string" },
+                },
+                timeout: { type: "integer" },
+              },
+              required: [],
+            },
+          },
+          {
+            name: "get_run_configurations",
+            description: "List run configurations.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                filePath: { type: "string" },
+              },
+              required: [],
+            },
+            annotations: {
+              readOnlyHint: true,
+            },
+          },
+          {
+            name: "execute_run_configuration",
+            description: "Execute a run configuration.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                configurationName: { type: "string" },
+                filePath: { type: "string" },
+                line: { type: "integer" },
+                timeout: { type: "integer" },
+                waitForExit: { type: "boolean" },
+                programArguments: { type: "string" },
+                workingDirectory: { type: "string" },
+                envs: {
+                  type: "object",
+                  additionalProperties: { type: "string" },
+                },
+              },
+              required: [],
+            },
+          },
+          {
+            name: "list_database_connections",
+            description: "List database connections.",
+            inputSchema: {
+              type: "object",
+              properties: {},
+              required: [],
+            },
+          },
+          {
+            name: "execute_sql_query",
+            description: "Execute SQL.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                connectionId: { type: "string" },
+                databaseName: { type: "string" },
+                schemaName: { type: "string" },
+                queryText: { type: "string" },
+              },
+              required: [
+                "connectionId",
+                "databaseName",
+                "schemaName",
+                "queryText",
+              ],
+            },
+          },
+        ]
+          .map((tool) =>
+            process.env.MOCK_MCP_SCHEMA_CHANGED === "1" &&
+            tool.name === "search_symbol"
+              ? {
+                  ...tool,
+                  inputSchema: {
+                    ...tool.inputSchema,
+                    required: [],
+                  },
+                }
+              : tool,
+          )
+          .filter(
+            (tool) =>
+              process.env.MOCK_MCP_MINIMAL !== "1" ||
+              tool.name === "echo" ||
+              tool.name === "fail" ||
+              tool.name === "protocol_failure",
+          ),
       },
     });
     continue;
@@ -137,6 +337,52 @@ for await (const line of input) {
         result: {
           content: [{ type: "text", text: "mock failure" }],
           isError: true,
+        },
+      });
+      continue;
+    }
+
+    if (name === "protocol_failure") {
+      send({
+        jsonrpc: "2.0",
+        id: request.id,
+        error: {
+          code: -32_003,
+          message: "mock request failure",
+        },
+      });
+      continue;
+    }
+
+    if (
+      typeof name === "string" &&
+      [
+        "search_symbol",
+        "analyze_calls",
+        "get_file_problems",
+        "get_project_modules",
+        "get_project_dependencies",
+        "rename_refactoring",
+        "build_project",
+        "get_run_configurations",
+        "execute_run_configuration",
+        "list_database_connections",
+        "execute_sql_query",
+      ].includes(name)
+    ) {
+      send({
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                tool: name,
+                arguments: argumentsValue,
+              }),
+            },
+          ],
         },
       });
       continue;

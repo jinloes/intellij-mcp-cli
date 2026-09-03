@@ -18,10 +18,12 @@ import {
   MINIMUM_NODE_MAJOR,
   isSupportedNodeVersion,
 } from "../src/node-version.js";
+import { VERSION } from "../src/version.js";
 
 interface PackageManifest {
   bin?: Record<string, unknown>;
   engines?: Record<string, unknown>;
+  files?: unknown[];
   version?: unknown;
   volta?: Record<string, unknown>;
 }
@@ -88,6 +90,9 @@ test("keeps the Copilot plugin manifest aligned with the package", () => {
   assert.equal(pluginManifest.name, "intellij-mcp-tools");
   assert.equal(pluginManifest.skills, "skills/");
   assert.equal(pluginManifest.version, packageManifest.version);
+  assert.equal(packageManifest.version, "0.3.0");
+  assert.equal(packageManifest.version, VERSION);
+  assert.ok(packageManifest.files?.includes("skills"));
 });
 
 test("keeps the marketplace entry aligned with the plugin", () => {
@@ -96,10 +101,34 @@ test("keeps the marketplace entry aligned with the plugin", () => {
   assert.deepEqual(marketplaceManifest.plugins?.[0], {
     name: pluginManifest.name,
     description:
-      "Use IntelliJ IDEA's MCP tools through the ijctl CLI for IDE-aware code analysis and operations.",
+      "Target IntelliJ projects and use version-matched code intelligence, run/debug, and database skills through ijctl.",
     version: pluginManifest.version,
     source: ".",
   });
+});
+
+test("bundles four uniquely named IntelliJ skills", async () => {
+  const entries = await readdir(join(packageRoot, "skills"), {
+    withFileTypes: true,
+  });
+  const names = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  assert.deepEqual(names, [
+    "intellij-code-intelligence",
+    "intellij-database",
+    "intellij-mcp-tools",
+    "intellij-run-debug",
+  ]);
+  for (const name of names) {
+    const instructions = await readFile(
+      join(packageRoot, "skills", name, "SKILL.md"),
+      "utf8",
+    );
+    assert.match(instructions, new RegExp(`^---\\nname: ${name}\\n`, "u"));
+    assert.match(instructions, /\ndescription: .+\n---\n/u);
+  }
 });
 
 test("makes Copilot skill invocation visible with the accompanying command", () => {
@@ -315,11 +344,12 @@ test("runs list, describe, call, and tool-error commands over stdio", async () =
       tools: Array<{ name: string; required: string[] }>;
     };
     assert.equal(toolsOutput.ok, true);
+    assert.ok(toolsOutput.tools.some((tool) => tool.name === "echo"));
+    assert.ok(toolsOutput.tools.some((tool) => tool.name === "fail"));
     assert.deepEqual(
-      toolsOutput.tools.map((tool) => tool.name),
-      ["echo", "fail"],
+      toolsOutput.tools.find((tool) => tool.name === "echo")?.required,
+      ["text"],
     );
-    assert.deepEqual(toolsOutput.tools[0]?.required, ["text"]);
 
     const describe = run(["describe", "echo"]);
     assert.equal(describe.status, 0, describe.stderr);
@@ -425,10 +455,8 @@ test("reuses one MCP connection across daemon-backed CLI commands", async () => 
       tools: Array<{ name: string }>;
     };
     assert.equal(toolsOutput.connectionMode, "daemon");
-    assert.deepEqual(
-      toolsOutput.tools.map((tool) => tool.name),
-      ["echo", "fail"],
-    );
+    assert.ok(toolsOutput.tools.some((tool) => tool.name === "echo"));
+    assert.ok(toolsOutput.tools.some((tool) => tool.name === "fail"));
 
     for (const text of ["first", "second"]) {
       const call = run([
@@ -502,7 +530,7 @@ test("reuses one MCP connection across daemon-backed CLI commands", async () => 
       socket.once("connect", () => {
         socket.write(
           `${JSON.stringify({
-            protocolVersion: 1,
+            protocolVersion: 2,
             id: "abandoned-request",
             token: daemonState.token,
             timeout: 1_000,
@@ -543,7 +571,7 @@ test("reuses one MCP connection across daemon-backed CLI commands", async () => 
     await new Promise<void>((resolvePromise, rejectPromise) => {
       stalledResponseSocket.write(
         `${JSON.stringify({
-          protocolVersion: 1,
+          protocolVersion: 2,
           id: "stalled-response",
           token: daemonState.token,
           timeout: 2_000,

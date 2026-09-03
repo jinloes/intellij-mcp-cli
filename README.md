@@ -1,24 +1,28 @@
 # intellij-mcp-cli
 
-`ijctl` is a shell-friendly MCP client that exposes tools from IntelliJ IDEA's integrated MCP server as deterministic JSON commands. It is intended for coding agents such as GitHub Copilot CLI when direct MCP registration is unavailable but use of the IDE's MCP server is permitted.
+`ijctl` is an agent-oriented JSON CLI for IntelliJ IDEA's bundled MCP server.
+It selects an intended project or worktree, discovers the live tool contract,
+reuses an optional authenticated local daemon, and provides stable aliases for
+common IDE workflows without hiding the generic MCP escape hatch.
 
 ```text
-GitHub Copilot CLI -> ijctl -> optional connection daemon -> IntelliJ MCP server
-                                                               |
-                                                               v
-                                                IntelliJ project model
+Coding agent -> ijctl -> optional connection daemon -> IntelliJ MCP server
+                                                          |
+                                                          v
+                                               Open IntelliJ project model
 ```
+
+Release `0.3.0` ships the CLI and four version-matched Copilot skills.
 
 ## Requirements
 
-- Node.js 20 or newer
-- IntelliJ IDEA 2025.2 or newer with **Settings > Tools > MCP Server > Enable MCP Server**
-- A client configuration copied from IntelliJ's MCP Server settings
+- Node.js 20 or newer. Volta uses the repository's Node.js 20.20.2 pin.
+- IntelliJ IDEA 2025.2 or newer with **Settings > Tools > MCP Server > Enable
+  MCP Server**.
+- An MCP client configuration copied from IntelliJ.
 
-Volta users automatically select Node.js 20.20.2 from the pin in `package.json`.
-Other runtime managers should select any supported Node.js 20+ release.
-
-This project does not bypass an organization's security policy. Use it only if both the IntelliJ MCP server and agent-driven CLI access are approved.
+Use this project only where both IntelliJ MCP and agent-driven CLI access are
+approved.
 
 ## Install
 
@@ -28,18 +32,19 @@ npm run build
 npm link
 ```
 
-`npm link` makes the `ijctl` executable available on your `PATH`. The package also has a `prepare` hook to protect packing and publishing, but the explicit build keeps local setup reliable when npm lifecycle scripts are restricted.
+The npm package includes `dist/`, all four `skills/`, this README, and the
+license. The Copilot plugin and npm CLI are installed separately.
 
-## Configure
+## Configure targets
 
-In IntelliJ, open **Settings > Tools > MCP Server** and use **Copy Stdio Config** or **Copy HTTP Stream Config**. Save the resulting server entry in one of:
+Save IntelliJ's copied stdio or HTTP entry in one of these locations:
 
-1. A path passed with `--config`
-2. The path in `IJCTL_CONFIG`
+1. `--config <path>`
+2. `IJCTL_CONFIG`
 3. `./ijctl.config.json`
 4. `~/.config/ijctl/config.json`
 
-`ijctl` accepts the common `mcpServers` format:
+Static stdio example:
 
 ```json
 {
@@ -57,9 +62,8 @@ In IntelliJ, open **Settings > Tools > MCP Server** and use **Copy Stdio Config*
 }
 ```
 
-### Dynamic projects and Git worktrees
-
-A copied stdio entry normally binds to one project. To reuse one entry for every project and worktree open in the same IntelliJ process, replace its fixed project path with an environment reference:
+One IntelliJ process can serve several open projects. A dynamic entry lets
+`ijctl --project` supply the project or worktree while retaining the IDE port:
 
 ```json
 {
@@ -77,20 +81,25 @@ A copied stdio entry normally binds to one project. To reuse one entry for every
 }
 ```
 
-Set `IJCTL_PROJECT_PATH` to the exact Git root before invoking `ijctl`. In a worktree, `git rev-parse --show-toplevel` returns that worktree's root rather than the primary checkout:
+Project context precedence is:
 
-```sh
-env IJCTL_PROJECT_PATH="$(git rev-parse --show-toplevel)" \
-  ijctl --server intellij-current doctor
-```
+1. `--project <path>`
+2. `IJCTL_PROJECT_PATH`
+3. The current Git root
+4. The canonical working directory
 
-The target project or worktree must be open in IntelliJ. Configuration parsing fails explicitly when `IJCTL_PROJECT_PATH` is omitted, preventing an accidental fallback to another checkout.
+Paths must name existing directories and are canonicalized. An explicit
+`--server` is always preserved and must be compatible with an authoritative
+project. Without it, `ijctl` selects one configured target matching the project
+or returns a stable mismatch/ambiguity error. Derived Git/cwd context only
+resolves a dynamic target or disambiguates a matching static target; otherwise
+the existing `intellij`/single-entry selection behavior remains.
 
-`IJ_MCP_SERVER_PORT` identifies the running IDE process, while the dynamic project path identifies a project within that process. Projects in the same IntelliJ process share one entry. Separate IntelliJ processes with different ports need separate named entries, selected with `--server`. Always retain the port copied from the corresponding IDE.
+The project or worktree must be open in the selected IntelliJ process. A
+worktree remains a distinct target; it is never rewritten to the primary
+checkout.
 
-The bundled Copilot skill resolves a project explicitly named by the user, otherwise the current Git root. It preserves a worktree's own root, supplies `IJCTL_PROJECT_PATH` on every command, and never falls back to the primary checkout. Static project entries remain supported.
-
-Streamable HTTP is also supported:
+Streamable HTTP and legacy SSE remain supported:
 
 ```json
 {
@@ -103,191 +112,235 @@ Streamable HTTP is also supported:
 }
 ```
 
-Do not copy the example URL blindly; use the configuration generated by your IDE. `${VARIABLE}` references are resolved from the environment and fail explicitly when missing.
+Use the URL generated by the IDE. HTTP/HTTPS URLs cannot embed credentials;
+configure supported Streamable HTTP headers instead. Legacy SSE does not
+support custom headers.
 
-URLs ending in `/sse` are recognized as the legacy SSE transport. You can also set `"transport": "sse"` or pass `--transport sse` explicitly.
+## Inspect configured instances
 
-## Use
-
-The examples below use the dynamic stdio entry above. Set the project path from the current checkout or worktree:
+`instances` means configured MCP targets, not discovered live IDE processes:
 
 ```sh
-export IJCTL_PROJECT_PATH="$(git rev-parse --show-toplevel)"
+ijctl --project "$PWD" instances
+ijctl --project "$PWD" instances --probe
 ```
 
-Recompute it after moving the shell to a different project. A static project entry does not require this variable; use that entry's server name instead.
+The listing exposes only target-oriented fields such as name, project path,
+transport, and IntelliJ port. It does not expose unrelated environment entries
+or headers. `--probe` connects only to safely resolvable candidates, reports
+reachability and latency, closes the connection, and invokes no MCP tool.
 
-Start a persistent connection for agent workflows:
+## Persistent connections
 
-```sh
-ijctl --server intellij-current daemon start
-```
-
-Native MCP clients normally keep one transport open and pay only per-request
-RPC cost. Separate CLI invocations cannot do that by themselves, so the daemon
-holds the IntelliJ MCP connection while each `ijctl` command uses a short-lived,
-authenticated loopback request. A daemon is isolated by the fully resolved
-server configuration, including a dynamic project or worktree path.
-
-The daemon stops after 15 minutes without a request by default. Manage it with:
+Start or reuse one daemon for the fully resolved server/project identity:
 
 ```sh
-ijctl --server intellij-current daemon status
+ijctl --project "$PWD" --server intellij-current daemon start
+ijctl --project "$PWD" --server intellij-current daemon status
 ijctl daemon list
-ijctl --server intellij-current daemon start --idle-timeout 1800000
-ijctl --server intellij-current daemon stop
+ijctl --project "$PWD" --server intellij-current daemon stop
 ijctl daemon stop --all
 ```
 
-`doctor`, `tools`, `describe`, and `call` automatically use a running daemon and
-report `"connectionMode": "daemon"`. They retain the original direct connection
-behavior when no daemon is running. Pass `--no-daemon` before the subcommand to
-bypass a running daemon for one invocation. Because configuration changes create
-a new isolated identity, `daemon list` and `daemon stop --all` remain available
-without resolving the current MCP configuration.
+The daemon uses an authenticated loopback socket and private per-user state. It
+stops after 15 minutes of inactivity by default. Normal MCP-backed commands use
+a matching daemon when available and otherwise open and close a direct
+connection. `--no-daemon` bypasses reuse for one invocation.
+
+## Discover and call tools
 
 Verify the connection:
 
 ```sh
-ijctl --server intellij-current doctor --pretty
+ijctl --project "$PWD" doctor --pretty
 ```
 
-Discover tools without loading every schema:
+`doctor` retains connection metadata and `toolCount`, and adds the resolved
+target/project, latency, command duration, and counts by safety class.
+
+Search or page the deterministic live catalog:
 
 ```sh
-ijctl --server intellij-current tools
-ijctl --server intellij-current describe search_symbol --pretty
+ijctl --project "$PWD" tools
+ijctl --project "$PWD" tools --query symbol --offset 0 --limit 20
+ijctl --project "$PWD" tools --detail full
+ijctl --project "$PWD" tools --full
+ijctl --project "$PWD" describe search_symbol
 ```
 
-Call a tool:
+`--full` remains a compatibility alias for `--detail full`. Every catalog entry
+adds `safety`.
+
+The generic forward-compatible path remains available:
 
 ```sh
-ijctl --server intellij-current describe search_symbol
-ijctl --server intellij-current call search_symbol --args-json '{"q":"UserService"}'
+ijctl --project "$PWD" describe TOOL
+ijctl --project "$PWD" call TOOL --args-json '{"key":"value"}'
+ijctl --project "$PWD" call TOOL --args-file arguments.json
+cat arguments.json | ijctl --project "$PWD" call TOOL --args-file -
 ```
 
-IntelliJ MCP schemas vary by IDE version. Always use the names and path semantics returned by `ijctl describe`; most tools operate on the project currently open in IntelliJ.
+Always follow the live schema returned by `describe`.
 
-For complex arguments:
+## Curated workflow aliases
+
+Aliases validate that the corresponding live IntelliJ tool still satisfies the
+required contract. If it is missing or changed, `ijctl` returns
+`TOOL_NOT_FOUND` or `TOOL_SCHEMA_CHANGED` and directs the caller to
+`tools`/`describe`; `call` remains available.
+
+### Code intelligence and refactoring
 
 ```sh
-ijctl --server intellij-current call analyze_calls --args-file arguments.json
-cat arguments.json | ijctl --server intellij-current call analyze_calls --args-file -
+ijctl --project "$PWD" search symbol UserService \
+  --path 'src/**' --include-external --limit 20
+ijctl --project "$PWD" analyze calls com.example.UserService.run \
+  --kind incoming --depth 3
+ijctl --project "$PWD" analyze problems src/service.ts --errors-only
+ijctl --project "$PWD" analyze modules
+ijctl --project "$PWD" analyze dependencies
+ijctl --project "$PWD" refactor rename src/service.ts oldName newName
 ```
 
-All successful output is JSON on stdout. Configuration and connection errors are JSON on stderr with exit code `1`. An MCP tool result with `isError: true` is written to stdout with exit code `2`.
-
-### Global options
-
-```text
---config <path>             MCP configuration file
---server <name>             configured server name
---url <url>                 direct HTTP MCP endpoint
---transport <transport>     streamable-http or sse
---timeout <milliseconds>    connection and request timeout
---pretty                    pretty-print JSON
---no-daemon                 bypass a running connection daemon
-```
-
-## Install the Copilot skill
-
-The skill teaches Copilot how to discover and safely invoke IntelliJ MCP tools.
-It does not install the `ijctl` executable, so build and link the CLI first.
-
-Copilot clients do not share skill installation state. In particular, the
-IntelliJ plugin does not read plugins installed by Copilot CLI.
-
-### GitHub Copilot in IntelliJ
-
-Install the skill at user scope so agent mode can load it in every IntelliJ
-project:
+### Build and run
 
 ```sh
-gh skill install jinloes/intellij-mcp-cli intellij-mcp-tools \
-  --agent github-copilot \
-  --scope user
-gh skill list
+ijctl --project "$PWD" build
+ijctl --project "$PWD" build --rebuild
+ijctl --project "$PWD" build --file src/a.ts src/b.ts
+ijctl --project "$PWD" run list
+ijctl --project "$PWD" run list --file src/main.ts
+ijctl --project "$PWD" run execute --configuration Tests --wait-for-exit
+ijctl --project "$PWD" run execute --file src/main.ts --line 12
 ```
 
-Start a new agent mode chat after installation. The skill is available as
-`/intellij-mcp-tools`.
+`run execute` accepts either `--configuration`, or both `--file` and `--line`.
+Launch-only timeout, program arguments, working directory, and one or more
+`NAME=VALUE` environment overrides are supported.
 
-To test unpublished changes from this checkout, replace the install command
-above with:
+### Database
 
 ```sh
-gh skill install . intellij-mcp-tools \
-  --from-local \
-  --agent github-copilot \
-  --scope user \
-  --force
+ijctl --project "$PWD" database connections
+ijctl --project "$PWD" database query \
+  --connection ID --database NAME --schema NAME --query "SELECT 1"
+ijctl --project "$PWD" database query \
+  --connection ID --database NAME --schema NAME --query-file query.sql
 ```
 
-### GitHub Copilot CLI
+SQL text may also be read from standard input with `--query-file -`.
 
-Register this repository's marketplace, then install the CLI plugin:
+## Safety and retry behavior
+
+Tool metadata uses these classes:
+
+- `read-only`
+- `workspace-write`
+- `execution`
+- `debug-state`
+- `database`
+- `unknown`
+
+MCP annotations take precedence, followed by conservative tool-name
+classification. Calling anything other than `read-only` adds a structured
+`NON_READ_ONLY_TOOL` warning but does not block the existing call. A warning is
+not authorization: agents must still obtain any required user approval.
+
+Read-only discovery failures before delivery may be `retryable: true`.
+Mutation-capable calls are never automatically retried after possible delivery.
+Database classification is conservative and does not parse SQL.
+
+## JSON, errors, and compatibility
+
+Successful JSON preserves the command's previous top-level fields and adds:
+
+```json
+{
+  "command": "tools",
+  "durationMs": 12.345
+}
+```
+
+MCP-backed output also adds a resolved `target`. Safety-sensitive calls add
+`safety` and possibly `warning`.
+
+| Condition                                           | Stream                    |               Exit |
+| --------------------------------------------------- | ------------------------- | -----------------: |
+| Success                                             | one JSON object on stdout |                  0 |
+| MCP result with `isError: true`                     | one JSON object on stdout |                  2 |
+| Operational/config/input/connection/request failure | one JSON object on stderr | 1 unless specified |
+| Commander help/version/usage                        | Commander output          |          unchanged |
+
+Operational errors include stable `code`, `message`, and `retryable` fields and
+may include structured `details`. Tool-level errors retain the raw MCP `result`
+and add an error object. `IJCTL_DEBUG=1` adds a stack to caught operational
+errors.
+
+Release `0.3.0` preserves `--server`, `--url`, `--transport`,
+`IJCTL_PROJECT_PATH`, direct/daemon behavior, existing successful fields,
+stdout/stderr placement, and exit status 2 for MCP tool errors. New metadata is
+additive.
+
+## Install bundled Copilot skills
+
+List the four skills shipped by the installed npm release:
 
 ```sh
-copilot plugin marketplace add jinloes/intellij-mcp-cli
-copilot plugin install intellij-mcp-tools@jinloes-plugins
-copilot plugin list
+ijctl skill list
 ```
 
-Refresh the marketplace and plugin to receive published updates:
+Install all skills at Copilot user scope (the default), or select a subset:
 
 ```sh
-copilot plugin marketplace update jinloes-plugins
-copilot plugin update intellij-mcp-tools
+ijctl skill install
+ijctl skill install intellij-code-intelligence intellij-database
 ```
 
-Marketplace installs track the repository's default branch. To test CLI plugin
-changes from another branch or a local checkout, load that checkout directly:
+Project scope writes to `<project>/.github/skills`:
 
 ```sh
-copilot --plugin-dir "$(git rev-parse --show-toplevel)"
+ijctl --project "$PWD" skill install --scope project --dry-run
+ijctl --project "$PWD" skill install --scope project
 ```
 
-Start a new Copilot CLI session, or reload and verify the skill in an active
-session:
+Install refuses an existing destination unless `--force` is explicit. It
+rejects symlink traversal, copies one skill through a sibling staging
+directory, writes an `ijctl` ownership/version marker, and atomically replaces
+the destination.
 
-```text
-/skills reload
-/skills info intellij-mcp-tools
+Refresh updates only marker-owned installations:
+
+```sh
+ijctl skill refresh
+ijctl --project "$PWD" skill refresh intellij-mcp-tools --scope project
 ```
 
-`/skills info` confirms that Copilot loaded the skill; it does not prove that a
-specific request invoked it. On invocation, Copilot displays **Using
-`intellij-mcp-tools` via `ijctl` for IntelliJ MCP.** immediately before the
-visible shell call to `ijctl`. The command output's `connectionMode` field then
-shows whether `ijctl` used the persistent daemon or a direct MCP connection. If
-the notice and `ijctl` call are absent, the skill was not visibly used for that
-request.
+The suite contains:
 
-The skill teaches Copilot to prefer IntelliJ for semantic and IDE-aware work,
-select the requested project or worktree, start and reuse the connection daemon,
-discover tools progressively, follow the active IntelliJ schema, preserve JSON
-output, and avoid unauthorized side effects.
+- `intellij-mcp-tools`: target resolution, daemon/catalog setup, and routing.
+- `intellij-code-intelligence`: semantic analysis, inspections, dependencies,
+  and guarded refactoring.
+- `intellij-run-debug`: build/run plus guarded terminal/debugger workflows.
+- `intellij-database`: read-first database workflows and explicit mutation
+  safeguards.
+
+The Copilot CLI plugin exposes the same `skills/` directory. Installing the
+plugin does not install the npm executable, and installing user skills does not
+register the plugin.
 
 ## Development
 
 ```sh
+npm run format:check
+npm run typecheck
+npm test
+npm run build
 npm run check
 ```
 
-The test suite builds and executes the production package bin. It verifies the Node.js runtime guard, configuration behavior, tool discovery, schema inspection, successful stdio calls, persistent daemon reuse and cleanup, disconnected-client isolation, and MCP tool errors against a mock server.
+Tests compile all `test/**/*.ts`, execute both production-bin test files, and
+use a deterministic stdio MCP fixture. They do not require a running IntelliJ
+instance.
 
-Repository documentation:
-
-- [AGENTS.md](AGENTS.md) - contributor and coding-agent instructions
-- [CODE_MAPPING.md](CODE_MAPPING.md) - feature and module ownership map
-- [ARCHITECTURE.md](ARCHITECTURE.md) - component boundaries and runtime flows
-
-## Current scope
-
-- Stdio, Streamable HTTP, and legacy SSE transports
-- MCP tool discovery, description, and invocation
-- Optional persistent, per-project MCP connection reuse
-- Standard `mcpServers` and `servers` configuration shapes
-- Environment interpolation for commands, arguments, environment values, URLs, and headers
-
-MCP resources, prompts, sampling, elicitation, and OAuth are not exposed by the CLI yet.
+See [AGENTS.md](AGENTS.md), [CODE_MAPPING.md](CODE_MAPPING.md), and
+[ARCHITECTURE.md](ARCHITECTURE.md).

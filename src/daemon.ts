@@ -28,7 +28,13 @@ import {
 } from "@modelcontextprotocol/client";
 
 import type { ResolvedServer } from "./config.js";
-import { CliError, errorMessage } from "./errors.js";
+import {
+  CliError,
+  errorMessage,
+  errorMetadata,
+  isCliErrorCode,
+  type CliErrorCode,
+} from "./errors.js";
 import {
   callTool,
   connectToServer,
@@ -37,7 +43,7 @@ import {
   type McpConnectionDetails,
 } from "./mcp.js";
 
-const DAEMON_PROTOCOL_VERSION = 1;
+const DAEMON_PROTOCOL_VERSION = 2;
 const DAEMON_HOST = "127.0.0.1";
 const MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
 const DAEMON_REQUEST_READ_TIMEOUT = 5_000;
@@ -74,11 +80,13 @@ export interface DaemonInfo {
   lastUsedAt: string;
   idleTimeout: number;
   connection: McpConnectionDetails;
+  project: ResolvedServer["project"];
 }
 
 export interface DaemonDoctorResult {
   info: DaemonInfo;
   toolCount: number;
+  tools: Tool[];
 }
 
 interface DaemonRequestBase {
@@ -142,6 +150,9 @@ interface DaemonErrorResponse {
   error: {
     message: string;
     exitCode: number;
+    code: CliErrorCode;
+    retryable: boolean;
+    details?: Record<string, unknown>;
   };
 }
 
@@ -155,7 +166,13 @@ interface DaemonReadyMessage {
 
 interface DaemonStartupErrorMessage {
   type: "error";
-  message: string;
+  error: {
+    message: string;
+    exitCode: number;
+    code: CliErrorCode;
+    retryable: boolean;
+    details?: Record<string, unknown>;
+  };
 }
 
 type DaemonStartupMessage = DaemonReadyMessage | DaemonStartupErrorMessage;
@@ -169,6 +186,14 @@ class DaemonUnavailableError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function serializedError(error: unknown): DaemonErrorResponse["error"] {
+  const metadata = errorMetadata(error);
+  return {
+    ...metadata,
+    exitCode: error instanceof CliError ? error.exitCode : 1,
+  };
 }
 
 function isErrnoException(
@@ -205,7 +230,12 @@ function daemonIdentity(server: ResolvedServer): string {
       JSON.stringify(
         stableValue({
           daemonProtocolVersion: DAEMON_PROTOCOL_VERSION,
-          server,
+          server: {
+            name: server.name,
+            source: server.source,
+            config: server.config,
+            projectPath: server.project.path,
+          },
         }),
       ),
     )
@@ -435,7 +465,11 @@ function isDaemonInfo(value: unknown): value is DaemonInfo {
     Number.isSafeInteger(value.idleTimeout) &&
     value.idleTimeout > 0 &&
     isRecord(value.connection) &&
-    typeof value.connection.transport === "string"
+    typeof value.connection.transport === "string" &&
+    isRecord(value.project) &&
+    typeof value.project.path === "string" &&
+    typeof value.project.source === "string" &&
+    typeof value.project.authoritative === "boolean"
   );
 }
 
@@ -445,7 +479,9 @@ function isDaemonDoctorResult(value: unknown): value is DaemonDoctorResult {
     isDaemonInfo(value.info) &&
     typeof value.toolCount === "number" &&
     Number.isSafeInteger(value.toolCount) &&
-    value.toolCount >= 0
+    value.toolCount >= 0 &&
+    isToolList(value.tools) &&
+    value.toolCount === value.tools.length
   );
 }
 
@@ -493,7 +529,10 @@ function parseDaemonResponse(
   if (
     !isRecord(value.error) ||
     typeof value.error.message !== "string" ||
-    typeof value.error.exitCode !== "number"
+    typeof value.error.exitCode !== "number" ||
+    !isCliErrorCode(value.error.code) ||
+    typeof value.error.retryable !== "boolean" ||
+    (value.error.details !== undefined && !isRecord(value.error.details))
   ) {
     throw new CliError("The ijctl daemon returned an invalid error response.");
   }
@@ -505,6 +544,11 @@ function parseDaemonResponse(
     error: {
       message: value.error.message,
       exitCode: value.error.exitCode,
+      code: value.error.code,
+      retryable: value.error.retryable,
+      ...(value.error.details === undefined
+        ? {}
+        : { details: value.error.details }),
     },
   };
 }
@@ -893,7 +937,14 @@ async function requestKnownDaemon<T>(
   }
 
   if (!response.ok) {
-    throw new CliError(response.error.message, response.error.exitCode);
+    throw new CliError(response.error.message, {
+      exitCode: response.error.exitCode,
+      code: response.error.code,
+      retryable: response.error.retryable,
+      ...(response.error.details === undefined
+        ? {}
+        : { details: response.error.details }),
+    });
   }
 
   if (!validateResult(response.result)) {
@@ -935,6 +986,7 @@ function daemonInfo(
     lastUsedAt,
     idleTimeout,
     connection,
+    project: server.project,
   };
 }
 
@@ -1094,8 +1146,7 @@ export async function runDaemon(
             id: requestId,
             ok: false,
             error: {
-              message: errorMessage(error),
-              exitCode: error instanceof CliError ? error.exitCode : 1,
+              ...serializedError(error),
             },
           });
           return;
@@ -1121,17 +1172,20 @@ export async function runDaemon(
               );
               break;
             case "doctor":
-              result = {
-                info: daemonInfo(
-                  resolvedServer,
-                  details,
-                  startedAt,
-                  lastUsedAt,
-                  idleTimeout,
-                ),
-                toolCount: (await listTools(connection, request.timeout))
-                  .length,
-              } satisfies DaemonDoctorResult;
+              {
+                const tools = await listTools(connection, request.timeout);
+                result = {
+                  info: daemonInfo(
+                    resolvedServer,
+                    details,
+                    startedAt,
+                    lastUsedAt,
+                    idleTimeout,
+                  ),
+                  toolCount: tools.length,
+                  tools,
+                } satisfies DaemonDoctorResult;
+              }
               break;
             case "tools":
               result = await listTools(connection, request.timeout);
@@ -1165,8 +1219,7 @@ export async function runDaemon(
             id: request.id,
             ok: false,
             error: {
-              message: errorMessage(error),
-              exitCode: error instanceof CliError ? error.exitCode : 1,
+              ...serializedError(error),
             },
           });
         } finally {
@@ -1225,7 +1278,13 @@ function isDaemonStartupMessage(value: unknown): value is DaemonStartupMessage {
     ((value.type === "ready" &&
       typeof value.identity === "string" &&
       isDaemonInfo(value.info)) ||
-      (value.type === "error" && typeof value.message === "string"))
+      (value.type === "error" &&
+        isRecord(value.error) &&
+        typeof value.error.message === "string" &&
+        typeof value.error.exitCode === "number" &&
+        isCliErrorCode(value.error.code) &&
+        typeof value.error.retryable === "boolean" &&
+        (value.error.details === undefined || isRecord(value.error.details))))
   );
 }
 
@@ -1400,7 +1459,15 @@ export async function startDaemon(
         return { info: racedDaemon, reused: true };
       }
       throw new CliError(
-        `Unable to start the ijctl daemon: ${message.message}`,
+        `Unable to start the ijctl daemon: ${message.error.message}`,
+        {
+          exitCode: message.error.exitCode,
+          code: message.error.code,
+          retryable: message.error.retryable,
+          ...(message.error.details === undefined
+            ? {}
+            : { details: message.error.details }),
+        },
       );
     }
 
@@ -1423,7 +1490,7 @@ export function notifyDaemonStartupError(error: unknown): void {
   }
   process.send({
     type: "error",
-    message: errorMessage(error),
+    error: serializedError(error),
   } satisfies DaemonStartupErrorMessage);
 }
 
