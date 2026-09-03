@@ -9,15 +9,27 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import type { ResolvedServer } from "./config.js";
 import { CliError, errorMessage } from "./errors.js";
+import { VERSION } from "./version.js";
 
 const CLIENT_NAME = "intellij-mcp-cli";
-const CLIENT_VERSION = "0.1.0";
 
 export interface McpConnection {
   client: Client;
   server: ResolvedServer;
   transport: string;
 }
+
+export function connectionDetails(connection: McpConnection) {
+  return {
+    transport: connection.transport,
+    protocolVersion: connection.client.getNegotiatedProtocolVersion() ?? null,
+    protocolEra: connection.client.getProtocolEra() ?? null,
+    serverInfo: connection.client.getServerVersion() ?? null,
+    capabilities: connection.client.getServerCapabilities() ?? {},
+  };
+}
+
+export type McpConnectionDetails = ReturnType<typeof connectionDetails>;
 
 function createHttpRequestInit(
   headers: Record<string, string>,
@@ -44,6 +56,7 @@ function createTransport(server: ResolvedServer) {
     if (requestInit !== undefined) {
       throw new CliError(
         "Custom headers are not supported with the legacy SSE transport. Use Streamable HTTP or stdio.",
+        { code: "CONFIG_INVALID" },
       );
     }
 
@@ -68,7 +81,7 @@ export async function connectToServer(
 ): Promise<McpConnection> {
   const client = new Client({
     name: CLIENT_NAME,
-    version: CLIENT_VERSION,
+    version: VERSION,
   });
   const { description, transport } = createTransport(server);
 
@@ -80,11 +93,21 @@ export async function connectToServer(
     } catch (cleanupError) {
       throw new CliError(
         `Unable to connect to MCP server "${server.name}": ${errorMessage(connectionError)}. Cleanup also failed: ${errorMessage(cleanupError)}`,
+        {
+          code: "MCP_CONNECTION_FAILED",
+          retryable: true,
+          details: { server: server.name },
+        },
       );
     }
 
     throw new CliError(
       `Unable to connect to MCP server "${server.name}": ${errorMessage(connectionError)}`,
+      {
+        code: "MCP_CONNECTION_FAILED",
+        retryable: true,
+        details: { server: server.name },
+      },
     );
   }
 
@@ -95,8 +118,22 @@ export async function listTools(
   connection: McpConnection,
   timeout: number,
 ): Promise<Tool[]> {
-  const result = await connection.client.listTools(undefined, { timeout });
-  return result.tools;
+  try {
+    const result = await connection.client.listTools(undefined, { timeout });
+    return result.tools;
+  } catch (error) {
+    throw new CliError(
+      `Unable to list tools from MCP server "${connection.server.name}": ${errorMessage(error)}`,
+      {
+        code: "MCP_REQUEST_FAILED",
+        retryable: true,
+        details: {
+          server: connection.server.name,
+          operation: "tools/list",
+        },
+      },
+    );
+  }
 }
 
 export async function callTool(
@@ -105,11 +142,26 @@ export async function callTool(
   argumentsValue: Record<string, unknown>,
   timeout: number,
 ): Promise<CallToolResult> {
-  return connection.client.callTool(
-    {
-      name: toolName,
-      arguments: argumentsValue,
-    },
-    { timeout, maxTotalTimeout: timeout },
-  );
+  try {
+    return await connection.client.callTool(
+      {
+        name: toolName,
+        arguments: argumentsValue,
+      },
+      { timeout, maxTotalTimeout: timeout },
+    );
+  } catch (error) {
+    throw new CliError(
+      `Unable to call MCP tool "${toolName}" on server "${connection.server.name}": ${errorMessage(error)}`,
+      {
+        code: "MCP_REQUEST_FAILED",
+        retryable: false,
+        details: {
+          server: connection.server.name,
+          tool: toolName,
+          delivery: "possibly-delivered",
+        },
+      },
+    );
+  }
 }

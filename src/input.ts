@@ -20,11 +20,17 @@ function parseArgumentsJson(
   try {
     parsed = JSON.parse(text);
   } catch (error) {
-    throw new CliError(`Invalid JSON from ${source}: ${errorMessage(error)}`);
+    throw new CliError(`Invalid JSON from ${source}: ${errorMessage(error)}`, {
+      code: "INPUT_INVALID",
+      details: { source },
+    });
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new CliError(`${source} must contain a JSON object.`);
+    throw new CliError(`${source} must contain a JSON object.`, {
+      code: "INPUT_INVALID",
+      details: { source },
+    });
   }
 
   return parsed as Record<string, unknown>;
@@ -35,7 +41,9 @@ export async function readToolArguments(options: {
   argsFile?: string;
 }): Promise<Record<string, unknown>> {
   if (options.argsJson !== undefined && options.argsFile !== undefined) {
-    throw new CliError("--args-json and --args-file cannot be used together.");
+    throw new CliError("--args-json and --args-file cannot be used together.", {
+      code: "INPUT_INVALID",
+    });
   }
 
   if (options.argsJson !== undefined) {
@@ -59,9 +67,65 @@ export async function readToolArguments(options: {
 
       throw new CliError(
         `Unable to read tool arguments from "${options.argsFile}": ${errorMessage(error)}`,
+        {
+          code: "INPUT_READ_FAILED",
+          details: { path: options.argsFile },
+        },
       );
     }
   }
 
   return {};
+}
+
+export async function readTextInput(options: {
+  text?: string;
+  file?: string;
+  textOption: string;
+  fileOption: string;
+}): Promise<string> {
+  if (options.text !== undefined && options.file !== undefined) {
+    throw new CliError(
+      `${options.textOption} and ${options.fileOption} cannot be used together.`,
+      { code: "INPUT_INVALID" },
+    );
+  }
+
+  let value: string;
+  let source: string;
+  if (options.text !== undefined) {
+    value = options.text;
+    source = options.textOption;
+  } else if (options.file !== undefined) {
+    source = options.file === "-" ? "standard input" : options.file;
+    if (options.file === "-") {
+      value = await readStandardInput();
+    } else {
+      try {
+        value = await readFile(options.file, "utf8");
+      } catch (error) {
+        throw new CliError(
+          `Unable to read text input from "${options.file}": ${errorMessage(error)}`,
+          {
+            code: "INPUT_READ_FAILED",
+            details: { path: options.file },
+          },
+        );
+      }
+    }
+  } else {
+    throw new CliError(
+      `One of ${options.textOption} or ${options.fileOption} is required.`,
+      { code: "INPUT_REQUIRED" },
+    );
+  }
+
+  if (value.trim().length === 0) {
+    throw new CliError(`${source} must not be empty.`, {
+      code: "INPUT_INVALID",
+      details: { source },
+    });
+  }
+
+  return value;
 }
